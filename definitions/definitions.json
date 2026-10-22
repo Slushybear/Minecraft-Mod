@@ -1,0 +1,12 @@
+{
+  "actions": ["WAIT", "HOLD", "SWAP_SLOT", "CHAT", "HARVEST_CROPS", "REPLANT_CROPS", "GOTO", "MINE"],
+  "crops": ["WHEAT", "CARROTS", "POTATOES", "BEETROOTS"],
+  "holdKeys": ["FORWARD", "BACK", "LEFT", "RIGHT", "JUMP", "SNEAK", "SPRINT", "ATTACK", "USE"],
+  "mineTargets": ["STONE", "DEEPSLATE", "COAL", "IRON", "COPPER", "GOLD", "REDSTONE", "LAPIS", "DIAMOND", "EMERALD"],
+  "chat": true,
+  "maxRadius": 6,
+  "maxMacros": 10,
+  "maxSteps": 32,
+  "minIntervalTicks": 20,
+  "maxIntervalTicks": 1200
+}

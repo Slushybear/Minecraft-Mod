@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "daedalus",
+  "version": "${version}",
+  "name": "Daedalus",
+  "description": "Client-side quality of life, visuals and farming automation.",
+  "authors": ["Slushybear"],
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.slushybear.daedalus.DaedalusClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.slushybear.daedalus.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "AbstractContainerScreenAccessor",
+    "AbstractContainerScreenMixin",
+    "CameraMixin",
+    "EntityMixin",
+    "GameRendererMixin",
+    "KeyboardInputMixin",
+    "LightmapExtractorMixin",
+    "MinecraftMixin",
+    "ScreenInvoker",
+    "StorageScreenMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

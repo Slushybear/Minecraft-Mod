@@ -21,6 +21,11 @@ public enum ActionType {
     /** Break the nearest matching blocks in reach. Target is a MineTarget, amount is radius. */
     MINE;
 
+    /** True for actions that press keys, turn the player, change the hotbar slot or interact with blocks. */
+    public boolean usesControls() {
+        return this != WAIT && this != CHAT;
+    }
+
     public static Optional<ActionType> byId(String id) {
         for (ActionType type : values()) {
             if (type.name().equalsIgnoreCase(id)) {

@@ -9,6 +9,11 @@ import java.util.List;
  * @param keySlot 0 means no key, otherwise 1 to Limits.KEY_SLOTS for a bound key
  */
 public record Macro(String name, List<Step> steps, int intervalTicks, int keySlot, boolean paused) {
+    /** True if any step takes over the player's keys, view or hotbar. Only one such macro may run at a time. */
+    public boolean usesControls() {
+        return steps.stream().anyMatch(step -> step.type().usesControls());
+    }
+
     public Macro withSteps(List<Step> value) {
         return new Macro(name, List.copyOf(value), intervalTicks, keySlot, paused);
     }

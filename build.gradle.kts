@@ -36,6 +36,21 @@ java {
     }
 }
 
+// ./gradlew deploy: build the mod and put it in the Prism instance's mods folder. Restart Minecraft to load it.
+val prismModsDir = file("C:/Users/wrong/AppData/Roaming/PrismLauncher/instances/Daedalus/minecraft/mods")
+
+tasks.register<Sync>("deploy") {
+    description = "Copies the built Daedalus jar into the Prism instance's mods folder."
+    group = "daedalus"
+    from(tasks.jar)
+    into(prismModsDir)
+    // Sync would delete the other mods, so only manage Daedalus jars.
+    preserve {
+        include("**")
+        exclude("daedalus-client-*.jar")
+    }
+}
+
 tasks.processResources {
     inputs.property("version", project.version)
     filesMatching("fabric.mod.json") {

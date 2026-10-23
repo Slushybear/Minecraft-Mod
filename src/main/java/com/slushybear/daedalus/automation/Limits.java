@@ -21,15 +21,17 @@ public final class Limits {
 
     public static final int KEY_SLOTS = 10;
 
-    /** Caps how many nodes one path search may expand, so a bad target cannot freeze the client. */
-    public static final int MAX_PATH_NODES = 20000;
-    /** Caps how far a GOTO can reach, measured in blocks on the flat plane. */
-    public static final int MAX_PATH_DISTANCE = 96;
-    /** Caps how far a GOTO can differ in height, which also bounds how much terrain is copied for the search. */
-    public static final int MAX_PATH_HEIGHT = 32;
+    /** Caps how far a GOTO target can be, on the flat plane. The walk is planned one segment of nearby terrain at a time. */
+    public static final int MAX_PATH_DISTANCE = 2000;
+    /** Terrain copied around the player for each segment's search: this many blocks to each side, and up or down. */
+    public static final int SEGMENT_RADIUS = 32;
+    public static final int SEGMENT_HEIGHT = 16;
+    /** How many times in a row a walk may fail and replan before the step fails. A finished segment resets the count. */
+    public static final int MAX_REPLANS = 4;
     /** How long a macro waits for the background search before giving up. */
     public static final int PLAN_TIMEOUT_TICKS = 200;
-    public static final int GOTO_TIMEOUT_TICKS = 1200;
+    /** The whole GOTO: 10 minutes, enough to walk the full distance cap. */
+    public static final int GOTO_TIMEOUT_TICKS = 12000;
 
     public static final int MAX_MINE_RADIUS = 4;
     public static final int MINE_TIMEOUT_TICKS = 600;

@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
 import org.lwjgl.glfw.GLFW;
 
@@ -26,6 +27,18 @@ public final class MacroKeys {
             KEYS.add(key);
             KeyMappingHelper.registerKeyMapping(key);
         }
+    }
+
+    /** The key bound to a slot (1-10), as a Minecraft key name like "key.keyboard.g". */
+    public static String keyName(int slot) {
+        return KEYS.get(slot - 1).saveString();
+    }
+
+    /** Rebinds a slot from the menu. Minecraft saves it in options.txt, the same as setting it in Controls. */
+    public static void setKey(int slot, InputConstants.Key key) {
+        KEYS.get(slot - 1).setKey(key);
+        KeyMapping.resetMapping();
+        Minecraft.getInstance().options.save();
     }
 
     public static void poll() {

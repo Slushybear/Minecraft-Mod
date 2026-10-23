@@ -8,126 +8,156 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.PriorityQueue;
+import java.util.Set;
 
 /**
- * A* over standing cells. Moves: step sideways, climb one block, or drop 1 to 3 blocks.
- * Every move needs a solid floor, and the two-block-high body has to fit.
- * Pure logic with no Minecraft types.
+ * A* over standing cells using {@link Moves}, with costs in ticks. The search state is a cell plus how long the body
+ * has been underwater, so a route cannot swim further than the breath limit.
+ *
+ * <p>It stops on whichever comes first: the goal, the node cap, or a time limit. When it stops short of the goal it still
+ * returns a useful partial route if one exists, so a far goal is reached one segment at a time.
  */
 public final class PathSearch {
-    private static final int WALK_COST = 10;
-    private static final int CLIMB_COST = 15;
-    private static final int DROP_BASE_COST = 10;
-    private static final int DROP_COST_PER_BLOCK = 3;
-    /** Lower bound on the cost of each block of height, so the heuristic never overestimates. */
-    private static final int HEIGHT_COST = 3;
-    private static final int[][] SIDES = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-    private static final int[] VERTICAL_MOVES = {0, 1, -1, -2, -3};
+    /**
+     * For a partial route, the candidates are ranked by remaining estimate plus cost divided by each of these. A small
+     * divisor trusts cost, a large one trusts closeness to the goal. The first that gets at least 5 blocks from the
+     * start wins, so a cheap short hop is preferred over a long detour that only looks close.
+     */
+    private static final double[] PARTIAL_WEIGHTS = {1.5, 2, 2.5, 3, 4, 5, 10};
+    private static final double MIN_PARTIAL_DISTANCE_SQ = 5 * 5;
+    /** Ignore a cheaper route to a cell unless it saves this many ticks. Re-queueing for less is wasted work. */
+    private static final double MIN_IMPROVEMENT = 0.01;
+    /** Moves into cells of the previous route cost this fraction, so a replan prefers to stay on the old route. */
+    public static final double FAVOR = 0.5;
+    /** Reading the clock is not free, so check it every this many nodes. */
+    private static final int CLOCK_INTERVAL = 64;
+
+    /**
+     * @param path the route found, or null if there is nothing worth walking
+     * @param reachedGoal true if the route ends in the goal, false if it is a partial segment toward it
+     */
+    public record Result(Path path, boolean reachedGoal, int expanded) {}
 
     private PathSearch() {}
 
-    /**
-     * Finds a path from start to a cell within `tolerance` blocks of goal (height within 1).
-     * Gives up after maxNodes expansions. Returns empty if there is no path or the limit was hit.
-     */
-    public static Optional<List<Cell>> find(BlockView world, Cell start, Cell goal, int tolerance, int maxNodes) {
-        PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingInt(Node::f));
-        Map<Cell, Node> best = new HashMap<>();
+    public static Result search(BlockView world, Cell start, Goal goal, PathSettings settings, Set<Cell> excluded, Set<Cell> favored) {
+        PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingDouble(Node::f));
+        Map<State, Node> best = new HashMap<>();
 
-        Node first = new Node(start, null, 0, heuristic(start, goal));
-        open.add(first);
-        best.put(start, first);
+        State first = new State(start, 0);
+        Node root = new Node(first, null, MoveType.WALK, 0, 0, goal.heuristic(start));
+        open.add(root);
+        best.put(first, root);
 
+        Node[] partial = new Node[PARTIAL_WEIGHTS.length];
+        double[] partialScore = new double[PARTIAL_WEIGHTS.length];
+        for (int i = 0; i < partial.length; i++) {
+            partial[i] = root;
+            partialScore[i] = root.f();
+        }
+        boolean failing = true;
+
+        long startTime = System.currentTimeMillis();
         int expanded = 0;
         while (!open.isEmpty()) {
-            if (Thread.currentThread().isInterrupted()) {
-                return Optional.empty(); // the caller gave up, for example a cancelled macro
+            if (expanded % CLOCK_INTERVAL == 0) {
+                if (Thread.currentThread().isInterrupted()) {
+                    return new Result(null, false, expanded); // the caller gave up, for example a cancelled macro
+                }
+                long elapsed = System.currentTimeMillis() - startTime;
+                if (elapsed >= settings.failureTimeoutMs() || (!failing && elapsed >= settings.primaryTimeoutMs())) {
+                    break;
+                }
             }
             Node current = open.poll();
-            if (current != best.get(current.cell())) {
-                continue; // a cheaper route to this cell was found after this entry was queued
+            if (current != best.get(current.state())) {
+                continue; // a cheaper route to this state was found after this entry was queued
             }
-            if (isGoal(current.cell(), goal, tolerance)) {
-                return Optional.of(rebuild(current));
+            Cell cell = current.state().cell();
+            if (goal.isEnd(cell)) {
+                return new Result(rebuild(current), true, expanded);
             }
-            if (++expanded > maxNodes) {
-                return Optional.empty();
+            if (++expanded > settings.maxNodes()) {
+                break;
             }
 
-            Cell from = current.cell();
-            for (int[] side : SIDES) {
-                for (int dy : VERTICAL_MOVES) {
-                    Cell to = new Cell(from.x() + side[0], from.y() + dy, from.z() + side[1]);
-                    if (!canStand(world, from, to, dy)) {
-                        continue;
+            for (Moves.Move move : Moves.from(world, cell, current.state().submerged(), settings)) {
+                if (excluded.contains(move.to())) {
+                    continue;
+                }
+                double cost = favored.contains(move.to()) ? move.cost() * FAVOR : move.cost();
+                State state = new State(move.to(), move.submerged());
+                double g = current.g() + cost;
+                Node existing = best.get(state);
+                if (existing != null && existing.g() - g <= MIN_IMPROVEMENT) {
+                    continue;
+                }
+                double h = goal.heuristic(move.to());
+                Node next = new Node(state, current, move.type(), move.cost(), g, g + h);
+                best.put(state, next);
+                open.add(next);
+
+                for (int i = 0; i < PARTIAL_WEIGHTS.length; i++) {
+                    double score = h + g / PARTIAL_WEIGHTS[i];
+                    if (partialScore[i] - score > MIN_IMPROVEMENT) {
+                        partialScore[i] = score;
+                        partial[i] = next;
+                        if (failing && distanceSq(next, start) > MIN_PARTIAL_DISTANCE_SQ) {
+                            failing = false;
+                        }
                     }
-                    int g = current.g() + moveCost(dy);
-                    Node existing = best.get(to);
-                    if (existing != null && existing.g() <= g) {
-                        continue;
-                    }
-                    Node next = new Node(to, current, g, g + heuristic(to, goal));
-                    best.put(to, next);
-                    open.add(next);
                 }
             }
         }
-        return Optional.empty();
-    }
 
-    private static boolean canStand(BlockView world, Cell from, Cell to, int dy) {
-        if (world.terrainAt(to.x(), to.y() - 1, to.z()) != Terrain.SOLID) {
-            return false; // no floor
-        }
-        if (world.terrainAt(to.x(), to.y(), to.z()) != Terrain.AIR) {
-            return false; // feet blocked
-        }
-        if (world.terrainAt(to.x(), to.y() + 1, to.z()) != Terrain.AIR) {
-            return false; // head blocked
-        }
-        if (dy == 1 && world.terrainAt(from.x(), from.y() + 2, from.z()) != Terrain.AIR) {
-            return false; // no room to jump from here
-        }
-        if (dy < 0) {
-            // While dropping, the body passes down the target column from the start height.
-            for (int y = to.y() + 2; y <= from.y() + 1; y++) {
-                if (world.terrainAt(to.x(), y, to.z()) != Terrain.AIR) {
-                    return false;
-                }
+        for (Node candidate : partial) {
+            if (distanceSq(candidate, start) > MIN_PARTIAL_DISTANCE_SQ) {
+                return new Result(rebuild(candidate), false, expanded);
             }
         }
-        return true;
+        return new Result(null, false, expanded);
     }
 
-    private static int moveCost(int dy) {
-        if (dy == 0) {
-            return WALK_COST;
-        }
-        if (dy == 1) {
-            return CLIMB_COST;
-        }
-        return DROP_BASE_COST + DROP_COST_PER_BLOCK * -dy;
+    /** A complete route to the goal with default settings and no time limits, or empty. Mostly for tests. */
+    public static Optional<Path> findPath(BlockView world, Cell start, Goal goal, int maxNodes, Set<Cell> excluded) {
+        return findPath(world, start, goal, PathSettings.defaults().withMaxNodes(maxNodes), excluded);
     }
 
-    private static int heuristic(Cell from, Cell goal) {
-        return WALK_COST * (Math.abs(from.x() - goal.x()) + Math.abs(from.z() - goal.z()))
-                + HEIGHT_COST * Math.abs(from.y() - goal.y());
+    /** A complete route to the goal under the given settings, with no time limits, or empty. */
+    public static Optional<Path> findPath(BlockView world, Cell start, Goal goal, PathSettings settings, Set<Cell> excluded) {
+        Result result = search(world, start, goal, settings.withoutTimeLimits(), excluded, Set.of());
+        return result.reachedGoal() ? Optional.of(result.path()) : Optional.empty();
     }
 
-    private static boolean isGoal(Cell cell, Cell goal, int tolerance) {
-        return Math.abs(cell.x() - goal.x()) <= tolerance
-                && Math.abs(cell.z() - goal.z()) <= tolerance
-                && Math.abs(cell.y() - goal.y()) <= 1;
+    /** Same as {@link #findPath(BlockView, Cell, Goal, int, Set)}, returning just the cells. */
+    public static Optional<List<Cell>> find(BlockView world, Cell start, Goal goal, int maxNodes, Set<Cell> excluded) {
+        return findPath(world, start, goal, maxNodes, excluded).map(Path::cells);
     }
 
-    private static List<Cell> rebuild(Node last) {
-        List<Cell> path = new ArrayList<>();
+    /** Shorthand for a GoalBlock search with nothing excluded, returning just the cells. */
+    public static Optional<List<Cell>> find(BlockView world, Cell start, Cell target, int tolerance, int maxNodes) {
+        return find(world, start, new GoalBlock(target, tolerance), maxNodes, Set.of());
+    }
+
+    private static double distanceSq(Node node, Cell start) {
+        Cell cell = node.state().cell();
+        double dx = cell.x() - start.x();
+        double dy = cell.y() - start.y();
+        double dz = cell.z() - start.z();
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private static Path rebuild(Node last) {
+        List<Waypoint> waypoints = new ArrayList<>();
         for (Node node = last; node != null; node = node.parent()) {
-            path.add(node.cell());
+            waypoints.add(new Waypoint(node.state().cell(), node.type(), node.moveCost()));
         }
-        Collections.reverse(path);
-        return path;
+        Collections.reverse(waypoints);
+        return new Path(waypoints);
     }
 
-    private record Node(Cell cell, Node parent, int g, int f) {}
+    private record State(Cell cell, int submerged) {}
+
+    /** moveCost is the real expected ticks of the move into this node, before any favouring discount. */
+    private record Node(State state, Node parent, MoveType type, double moveCost, double g, double f) {}
 }

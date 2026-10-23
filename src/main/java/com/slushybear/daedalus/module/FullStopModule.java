@@ -1,10 +1,10 @@
 package com.slushybear.daedalus.module;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.slushybear.daedalus.ui.MenuKeys;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
@@ -14,10 +14,10 @@ public final class FullStopModule extends Module {
             "key.daedalus.full_stop",
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_X,
-            KeyMapping.Category.register(Identifier.fromNamespaceAndPath("daedalus", "modules")));
+            MenuKeys.CATEGORY);
 
     public FullStopModule() {
-        super("Full Stop", "Press a key, stop dead", true);
+        super("Full Stop", "Press a key, stop dead", Category.MISC, true);
     }
 
     @Override

@@ -9,6 +9,7 @@
   "entrypoints": {
     "client": ["com.slushybear.daedalus.DaedalusClient"]
   },
+  "mixins": ["daedalus.mixins.json"],
   "depends": {
     "fabricloader": ">=0.19.3",
     "minecraft": "26.2",

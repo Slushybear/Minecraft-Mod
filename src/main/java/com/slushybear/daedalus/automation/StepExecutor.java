@@ -1,7 +1,7 @@
 package com.slushybear.daedalus.automation;
 
 import com.slushybear.daedalus.pathfinding.Cell;
-import com.slushybear.daedalus.pathfinding.GridSnapshot;
+import com.slushybear.daedalus.pathfinding.GoalBlock;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -10,9 +10,6 @@ import net.minecraft.world.entity.player.Inventory;
 
 /** Turns one step into a Task. Instant steps finish on their first tick. */
 public final class StepExecutor {
-    /** Blocks of extra terrain copied around the start and goal for a path search. */
-    private static final int SNAPSHOT_MARGIN = 12;
-
     private StepExecutor() {}
 
     public static Task start(Minecraft client, Step step) {
@@ -47,7 +44,7 @@ public final class StepExecutor {
         };
     }
 
-    /** Plans a path to the target now, then returns a task that walks it. A failed plan fails the step. */
+    /** Starts planning toward the target now, and returns a task that walks there one segment at a time. */
     private static Task goTo(Minecraft client, Step step) {
         LocalPlayer player = client.player;
         if (player == null || client.level == null) {
@@ -57,26 +54,11 @@ public final class StepExecutor {
         String[] parts = step.target().split(" ");
         Cell goal = new Cell(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
         BlockPos here = player.blockPosition();
-        Cell start = new Cell(here.getX(), here.getY(), here.getZ());
-
-        if (Math.max(Math.abs(goal.x() - start.x()), Math.abs(goal.z() - start.z())) > Limits.MAX_PATH_DISTANCE) {
+        if (Math.max(Math.abs(goal.x() - here.getX()), Math.abs(goal.z() - here.getZ())) > Limits.MAX_PATH_DISTANCE) {
             return Task.failWith("target is more than " + Limits.MAX_PATH_DISTANCE + " blocks away");
         }
-        if (Math.abs(goal.y() - start.y()) > Limits.MAX_PATH_HEIGHT) {
-            return Task.failWith("target is more than " + Limits.MAX_PATH_HEIGHT + " blocks above or below you");
-        }
 
-        // Copy the terrain here on the client thread, so the worker thread never touches the live world.
-        // The box covers both ends plus room to go around obstacles and to drop below the lower end.
-        GridSnapshot snapshot = GridSnapshot.capture(
-                new WorldView(client.level),
-                Math.min(start.x(), goal.x()) - SNAPSHOT_MARGIN,
-                Math.min(start.y(), goal.y()) - SNAPSHOT_MARGIN,
-                Math.min(start.z(), goal.z()) - SNAPSHOT_MARGIN,
-                Math.max(start.x(), goal.x()) + SNAPSHOT_MARGIN,
-                Math.max(start.y(), goal.y()) + SNAPSHOT_MARGIN,
-                Math.max(start.z(), goal.z()) + SNAPSHOT_MARGIN);
-        return new PathPlanTask(snapshot, start, goal, step.target());
+        return new NavigationTask(client, new GoalBlock(goal, 1), step.target());
     }
 
     private static Task mine(Step step, Allowlist allowlist) {

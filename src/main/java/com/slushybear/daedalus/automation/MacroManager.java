@@ -97,7 +97,36 @@ public final class MacroManager {
         if (RUNNING.containsKey(key)) {
             throw new IllegalStateException("'" + macro.name() + "' is already running");
         }
+        // One macro at a time may own the keys, view and hotbar. Waiting and chatting never conflict.
+        if (macro.usesControls()) {
+            String holder = controlHolder();
+            if (holder != null && !holder.equalsIgnoreCase(macro.name())) {
+                throw new IllegalStateException("'" + holder + "' is using the controls");
+            }
+        }
         RUNNING.put(key, new MacroRunner(macro));
+    }
+
+    /** The name of the running macro that owns the controls, or null if none does. */
+    private static String controlHolder() {
+        for (MacroRunner runner : RUNNING.values()) {
+            if (!runner.finished() && runner.macro().usesControls()) {
+                return runner.macro().name();
+            }
+        }
+        return null;
+    }
+
+    /** Stops every running macro that owns the controls, with a reason shown to the player. Chat-only macros keep going. */
+    public static void interruptControllers(Minecraft client, String reason) {
+        Iterator<MacroRunner> runners = RUNNING.values().iterator();
+        while (runners.hasNext()) {
+            MacroRunner runner = runners.next();
+            if (runner.macro().usesControls()) {
+                runner.interrupt(client, reason);
+                runners.remove();
+            }
+        }
     }
 
     public static boolean stop(String name) {
@@ -160,7 +189,12 @@ public final class MacroManager {
             }
             COUNTDOWNS.put(key, macro.intervalTicks());
             if (!RUNNING.containsKey(key) && !macro.steps().isEmpty()) {
-                start(macro);
+                try {
+                    start(macro);
+                } catch (IllegalStateException e) {
+                    // Another macro has the controls. Skip this round and try again next interval.
+                    DaedalusClient.LOGGER.debug("Interval macro {} skipped: {}", macro.name(), e.getMessage());
+                }
             }
         }
     }

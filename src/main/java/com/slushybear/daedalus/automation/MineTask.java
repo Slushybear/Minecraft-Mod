@@ -123,7 +123,7 @@ public final class MineTask implements Task {
         return hit.getBlockPos().equals(target);
     }
 
-    /** Turns the player to face the block, using the same yaw and pitch convention as FollowPathTask. */
+    /** Turns the player to face the block, using the same yaw and pitch convention as PathWalker. */
     private static void aim(LocalPlayer player, BlockPos target) {
         Vec3 eye = player.getEyePosition();
         double dx = target.getX() + 0.5 - eye.x;

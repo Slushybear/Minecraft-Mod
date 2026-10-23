@@ -18,6 +18,16 @@ public final class MacroRunner {
         return finished;
     }
 
+    public Macro macro() {
+        return macro;
+    }
+
+    /** Stops the run from outside, such as when the player takes damage, and tells the player why. */
+    public void interrupt(Minecraft client, String reason) {
+        say(client, "stopped: " + reason);
+        cancel(client);
+    }
+
     /** Runs tasks until the budget is spent or an ongoing task is still going. Returns how many tasks were started. */
     public int tick(Minecraft client, int budget) {
         int started = 0;

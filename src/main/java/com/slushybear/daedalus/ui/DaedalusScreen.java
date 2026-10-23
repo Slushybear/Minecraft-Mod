@@ -10,6 +10,7 @@ import com.slushybear.daedalus.module.ModuleRegistry;
 import com.slushybear.daedalus.module.setting.BoolSetting;
 import com.slushybear.daedalus.module.setting.ChoiceSetting;
 import com.slushybear.daedalus.module.setting.KeybindSetting;
+import com.slushybear.daedalus.module.setting.MultiChoiceSetting;
 import com.slushybear.daedalus.module.setting.Setting;
 import com.slushybear.daedalus.module.setting.SliderSetting;
 import com.slushybear.daedalus.module.setting.TextSetting;
@@ -445,6 +446,10 @@ public final class DaedalusScreen extends Screen {
             }
             case KeybindSetting s -> {
                 return ui.bindRow("set:" + id, s.name(), x, y, w, s.get(), s::set);
+            }
+            case MultiChoiceSetting s -> {
+                ui.text(ui.truncate(s.name(), w), x, y, Theme.text());
+                return ui.chipGrid(x, y + 11, w, s.options(), s::has, s::toggle) + 7;
             }
             case TextSetting s -> {
                 ui.text(ui.truncate(s.name(), w), x, y, Theme.muted());

@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.function.IntPredicate;
+import java.util.function.Predicate;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -353,6 +354,16 @@ final class Ui {
      * labels are what is shown; values are what onPick receives. Returns the y below the last row.
      */
     int chipGrid(int x, int y, int w, List<String> labels, List<String> values, String value, Consumer<String> onPick) {
+        return chipGrid(x, y, w, labels, values, value::equals, onPick);
+    }
+
+    /** A chip grid where any number of chips can be on, for multi-choice settings. Returns the y below the last row. */
+    int chipGrid(int x, int y, int w, List<String> options, Predicate<String> isOn, Consumer<String> onToggle) {
+        return chipGrid(x, y, w, options, options, isOn, onToggle);
+    }
+
+    private int chipGrid(int x, int y, int w, List<String> labels, List<String> values, Predicate<String> isOn,
+                         Consumer<String> onPick) {
         int h = 13;
         int gap = 3;
         int cx = x;
@@ -364,7 +375,7 @@ final class Ui {
                 cx = x;
                 y += h + gap;
             }
-            boolean on = option.equals(value);
+            boolean on = isOn.test(option);
             boolean hovered = hover(cx, y, cw, h);
             if (on) {
                 round(cx, y, cw, h, Theme.corner(h), Theme.accent());

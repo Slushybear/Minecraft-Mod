@@ -59,7 +59,7 @@ public final class PathTracker {
 
     /** The waypoint `steps` moves after the current target, or null past the end. */
     public Waypoint ahead(int steps) {
-        int i = index + 1 + steps;
+        int i = index + 2 + steps;
         return i < waypoints.size() ? waypoints.get(i) : null;
     }
 

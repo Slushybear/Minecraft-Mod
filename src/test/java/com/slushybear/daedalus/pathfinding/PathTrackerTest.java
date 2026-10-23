@@ -42,6 +42,29 @@ class PathTrackerTest {
     }
 
     @Test
+    void aheadStartsAfterTheCurrentTarget() {
+        PathTracker tracker = new PathTracker(corridor());
+
+        assertEquals(new Cell(1, 1, 0), tracker.to().cell());
+        assertEquals(new Cell(2, 1, 0), tracker.ahead(0).cell());
+        assertEquals(new Cell(3, 1, 0), tracker.ahead(1).cell());
+    }
+
+    /** The walker re-checks each move ahead with Moves.isPossible, so every planned move must pass it. */
+    @Test
+    void everyMoveAheadIsPossibleOnAnUnchangedWorld() {
+        FakeWorld world = new FakeWorld().floor(0, 0, 10, 0, 0);
+        PathTracker tracker = new PathTracker(route(world, new Cell(0, 1, 0), new Cell(10, 1, 0)));
+
+        Cell from = tracker.to().cell();
+        for (int k = 0; tracker.ahead(k) != null; k++) {
+            Cell next = tracker.ahead(k).cell();
+            assertTrue(Moves.isPossible(world, from, next, PathSettings.defaults()), from + " -> " + next);
+            from = next;
+        }
+    }
+
+    @Test
     void jumpsBackAfterKnockback() {
         PathTracker tracker = new PathTracker(corridor());
         for (int x = 0; x <= 6; x++) {

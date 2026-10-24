@@ -41,6 +41,16 @@ public final class PathSearch {
     private PathSearch() {}
 
     public static Result search(BlockView world, Cell start, Goal goal, PathSettings settings, Set<Cell> excluded, Set<Cell> favored) {
+        // The heuristic needs the cheapest flat cost for this player, or it would overestimate for a fast one.
+        Costs.useMinFlat(settings.fastestFlat());
+        try {
+            return run(world, start, goal, settings, excluded, favored);
+        } finally {
+            Costs.resetMinFlat();
+        }
+    }
+
+    private static Result run(BlockView world, Cell start, Goal goal, PathSettings settings, Set<Cell> excluded, Set<Cell> favored) {
         PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingDouble(Node::f));
         Map<State, Node> best = new HashMap<>();
 

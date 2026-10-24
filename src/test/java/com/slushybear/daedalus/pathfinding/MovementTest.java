@@ -128,6 +128,19 @@ class MovementTest {
     }
 
     @Test
+    void explainsWhyAMoveIsRejected() {
+        FakeWorld world = new FakeWorld().floor(0, 0, 3, 0, 0).set(2, 1, 0, Terrain.SOLID);
+
+        String blocked = Moves.explain(world, new Cell(1, 1, 0), new Cell(2, 1, 0));
+        String goodTarget = Moves.explain(world, new Cell(0, 1, 0), new Cell(3, 1, 0));
+        String badStart = Moves.explain(world, new Cell(2, 1, 0), new Cell(3, 1, 0));
+
+        assertTrue(blocked.contains("target 2 1 0") && blocked.contains("feet SOLID"), blocked);
+        assertTrue(goodTarget.contains("LAND cell"), goodTarget);
+        assertTrue(badStart.contains("start 2 1 0"), badStart);
+    }
+
+    @Test
     void aJumpDownNeedsTheColumnBeforeTheLandingOpen() {
         // A fence post at y=-1 just before the landing would catch the body on its way down.
         FakeWorld open = new FakeWorld().floor(0, 0, 2, 0, 0).floor(-2, 7, 9, 0, 0);

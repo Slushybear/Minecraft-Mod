@@ -11,16 +11,16 @@ package com.slushybear.daedalus.pathfinding;
  */
 public final class JumpPlanner {
     // Vanilla movement, per tick. Movement input is scaled by 0.98 before it is applied.
-    static final double GROUND_FRICTION = 0.6 * 0.91;
-    static final double AIR_DRAG = 0.91;
+    public static final double GROUND_FRICTION = 0.6 * 0.91;
+    public static final double AIR_DRAG = 0.91;
     static final double WALK_ACCEL = 0.1 * 0.98;
     static final double SPRINT_ACCEL = 0.13 * 0.98;
     static final double AIR_ACCEL = 0.02 * 0.98;
     static final double SPRINT_AIR_ACCEL = 0.026 * 0.98;
     static final double JUMP_VELOCITY = 0.42;
     static final double SPRINT_JUMP_BOOST = 0.2;
-    static final double GRAVITY = 0.08;
-    static final double VERTICAL_DRAG = 0.98;
+    public static final double GRAVITY = 0.08;
+    public static final double VERTICAL_DRAG = 0.98;
     /** The body is 0.6 wide. */
     public static final double HALF_WIDTH = 0.3;
 

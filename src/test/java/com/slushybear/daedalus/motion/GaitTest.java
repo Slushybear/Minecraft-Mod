@@ -64,6 +64,23 @@ class GaitTest {
     }
 
     @Test
+    void localInputPushesTheWayAskedWhateverTheView() {
+        for (double view = -180; view < 180; view += 30) {
+            for (double angle = 0; angle < 360; angle += 45) {
+                double dx = -Math.sin(Math.toRadians(angle));
+                double dz = Math.cos(Math.toRadians(angle));
+                double[] input = Gait.local(view, dx, dz);
+                // Turn the input back into a world direction the way vanilla does: forward (-sin, cos), left (cos, sin).
+                double yaw = Math.toRadians(view);
+                double wx = input[0] * -Math.sin(yaw) + input[1] * Math.cos(yaw);
+                double wz = input[0] * Math.cos(yaw) + input[1] * Math.sin(yaw);
+                assertEquals(dx, wx, 1e-9, "view " + view + " angle " + angle);
+                assertEquals(dz, wz, 1e-9, "view " + view + " angle " + angle);
+            }
+        }
+    }
+
+    @Test
     void yawFollowsTheGameConvention() {
         assertEquals(0, Gait.yawTo(0, 1), 1e-9);
         assertEquals(90, Gait.yawTo(-1, 0), 1e-9);

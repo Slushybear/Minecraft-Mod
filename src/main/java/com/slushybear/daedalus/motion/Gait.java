@@ -42,6 +42,21 @@ public final class Gait {
         return new Drive(Math.cos(radians) * amount, -Math.sin(radians) * amount, size <= SPRINT_ANGLE && speed >= 1);
     }
 
+    /**
+     * A direction on the ground turned into move input for a view facing `viewYaw`: {forward, left}, of length 1 (or 0
+     * for no direction). For pushing a precise way regardless of where the view points, such as steering in the air.
+     */
+    public static double[] local(double viewYaw, double dx, double dz) {
+        double length = Math.hypot(dx, dz);
+        if (length < 1e-9) {
+            return new double[]{0, 0};
+        }
+        double yaw = Math.toRadians(viewYaw);
+        double forward = (dx * -Math.sin(yaw) + dz * Math.cos(yaw)) / length;
+        double left = (dx * Math.cos(yaw) + dz * Math.sin(yaw)) / length;
+        return new double[]{forward, left};
+    }
+
     /** The yaw, in game degrees, for a direction on the ground. Forward at yaw 0 is +z, and yaw 90 faces -x. */
     public static double yawTo(double dx, double dz) {
         return Math.toDegrees(Math.atan2(-dx, dz));

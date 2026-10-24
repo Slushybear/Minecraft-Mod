@@ -33,6 +33,7 @@ public final class ModuleRegistry {
             new TargetHud(),
 
             new FullStopModule(),
+            new PathfinderModule(),
 
             new ArrayListHud(),
             new BlockEsp(),

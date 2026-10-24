@@ -16,7 +16,7 @@ public interface Goal {
         double b = Math.abs(dz);
         double straight = Math.abs(a - b);
         double diagonal = Math.min(a, b);
-        return (straight + diagonal * Math.sqrt(2)) * Costs.MIN_PER_BLOCK_FLAT;
+        return (straight + diagonal * Math.sqrt(2)) * Costs.minFlat();
     }
 
     /** Cheapest possible ticks to change height by dy (positive is up). */

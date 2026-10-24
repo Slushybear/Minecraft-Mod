@@ -61,13 +61,35 @@ public final class Moves {
             for (int[] side : SIDES) {
                 addParkour(world, from, side, settings, moves);
                 if (settings.allowLongJumps()) {
-                    addRunJump(world, from, side, moves);
+                    addRunJump(world, from, side, settings, moves);
                 }
                 addNeos(world, from, side, settings, moves);
                 addSideJumps(world, from, side, settings, moves);
             }
         }
         return moves;
+    }
+
+    /**
+     * Why `to` is not a legal move from `from`, in words, for the log: which end is not somewhere the body can be, and
+     * what the feet, head and floor cells hold.
+     */
+    public static String explain(BlockView world, Cell from, Cell to) {
+        if (kind(world, from) == Kind.NONE) {
+            return "the start " + describe(world, from) + " is not somewhere the body can stand, swim or climb";
+        }
+        Kind toKind = kind(world, to);
+        if (toKind == Kind.NONE) {
+            return "the target " + describe(world, to) + " is not somewhere the body can stand, swim or climb";
+        }
+        return "the target " + describe(world, to) + " is a " + toKind + " cell, but nothing on the way there from "
+                + describe(world, from) + " is clear any more";
+    }
+
+    private static String describe(BlockView world, Cell cell) {
+        return cell.x() + " " + cell.y() + " " + cell.z() + " (feet " + world.terrainAt(cell.x(), cell.y(), cell.z())
+                + ", head " + world.terrainAt(cell.x(), cell.y() + 1, cell.z())
+                + ", floor " + world.terrainAt(cell.x(), cell.y() - 1, cell.z()) + ")";
     }
 
     /** True if `to` is still one legal move away from `from`. The walker uses this to notice the world changing. */
@@ -89,7 +111,7 @@ public final class Moves {
         Cell level = new Cell(x, y, z);
         Kind levelKind = kind(world, level);
         switch (levelKind) {
-            case LAND -> moves.add(new Move(level, flatCost(fromKind, settings) + dangerCost(world, level), MoveType.WALK, 0));
+            case LAND -> moves.add(new Move(level, flatCost(world, from, fromKind, settings, level) + dangerCost(world, level), MoveType.WALK, 0));
             case SWIM -> {
                 if (settings.allowWater()) {
                     addWaterMove(world, level, waterCost(settings), MoveType.SWIM, submerged, moves);
@@ -97,7 +119,7 @@ public final class Moves {
             }
             case LADDER -> {
                 if (settings.allowLadders()) {
-                    moves.add(new Move(level, Costs.WALK, MoveType.WALK, 0));
+                    moves.add(new Move(level, settings.profile().walk(), MoveType.WALK, 0));
                 }
             }
             default -> { }
@@ -106,14 +128,14 @@ public final class Moves {
         // Step up one block. Needs room above the head to jump from here.
         Cell up = new Cell(x, y + 1, z);
         if (kind(world, up) == Kind.LAND && passable(world.terrainAt(from.x(), y + 2, from.z()))) {
-            moves.add(new Move(up, Math.max(Costs.JUMP_UP, Costs.WALK) + Costs.JUMP_PENALTY + dangerCost(world, up),
+            moves.add(new Move(up, Math.max(Costs.JUMP_UP, settings.profile().walk()) + Costs.JUMP_PENALTY + dangerCost(world, up),
                     MoveType.CLIMB, 0));
         }
 
         // Step from a platform onto the top of a ladder just below it.
         Cell ladderTop = new Cell(x, y - 1, z);
         if (settings.allowLadders() && kind(world, ladderTop) == Kind.LADDER && world.terrainAt(x, y + 1, z) == Terrain.AIR) {
-            moves.add(new Move(ladderTop, Costs.WALK, MoveType.WALK, 0));
+            moves.add(new Move(ladderTop, settings.profile().walk(), MoveType.WALK, 0));
         }
 
         // Walk off the edge. Only when the level cell is open air with nothing to stand on.
@@ -138,20 +160,20 @@ public final class Moves {
                 case WATER -> {
                     Cell landing = new Cell(x, y, z);
                     if (settings.allowWater() && fall <= settings.maxFallIntoWater() && kind(world, landing) == Kind.SWIM) {
-                        addWaterMove(world, landing, Costs.WALK_OFF_EDGE + Costs.fall(fall), MoveType.DROP, submerged, moves);
+                        addWaterMove(world, landing, settings.profile().walkOffEdge() + Costs.fall(fall), MoveType.DROP, submerged, moves);
                     }
                 }
                 case CLIMBABLE -> {
                     Cell landing = new Cell(x, y, z);
                     if (settings.allowLadders() && fall <= MAX_LADDER_CATCH && kind(world, landing) == Kind.LADDER) {
-                        moves.add(new Move(landing, Costs.WALK_OFF_EDGE + Costs.fall(fall), MoveType.DROP, 0));
+                        moves.add(new Move(landing, settings.profile().walkOffEdge() + Costs.fall(fall), MoveType.DROP, 0));
                     }
                 }
                 case SOLID -> {
                     Cell landing = new Cell(x, y + 1, z);
                     int dropped = fall - 1;
                     if (dropped >= 1 && dropped <= settings.maxFallNoWater() && kind(world, landing) == Kind.LAND) {
-                        double cost = Costs.WALK_OFF_EDGE + Math.max(Costs.fall(dropped), Costs.CENTER_AFTER_FALL);
+                        double cost = settings.profile().walkOffEdge() + Math.max(Costs.fall(dropped), settings.profile().centerAfterFall());
                         moves.add(new Move(landing, cost + dangerCost(world, landing), MoveType.DROP, 0));
                     }
                 }
@@ -179,7 +201,7 @@ public final class Moves {
         if (world.terrainAt(x, y - 1, from.z()) == Terrain.DANGER || world.terrainAt(from.x(), y - 1, z) == Terrain.DANGER) {
             return;
         }
-        double perBlock = settings.allowSprint() ? Costs.SPRINT : Costs.WALK;
+        double perBlock = flatCost(world, from, Kind.LAND, settings, to);
         moves.add(new Move(to, perBlock * SQRT_2 + dangerCost(world, to), MoveType.DIAGONAL, 0));
     }
 
@@ -234,8 +256,8 @@ public final class Moves {
             if (world.terrainAt(tx, y, tz) != Terrain.AIR) {
                 // Something to land on top of, one block up.
                 Cell up = new Cell(tx, y + 1, tz);
-                if (distance <= 3 && kind(world, up) == Kind.LAND && overshootSafe(world, tx + dx, y + 1, tz + dz)) {
-                    moves.add(new Move(up, Costs.WALK * distance + Costs.JUMP_PENALTY + dangerCost(world, up), MoveType.PARKOUR, 0));
+                if (distance <= 3 && settings.allowLongJumps() && kind(world, up) == Kind.LAND && overshootSafe(world, tx + dx, y + 1, tz + dz)) {
+                    moves.add(new Move(up, jumpRun(settings, distance, 1) + Costs.JUMP_PENALTY + dangerCost(world, up), MoveType.PARKOUR, 0));
                 }
                 return;
             }
@@ -244,7 +266,7 @@ public final class Moves {
             if (floor == Terrain.SOLID) {
                 Cell to = new Cell(tx, y, tz);
                 if (distance <= 4 && kind(world, to) == Kind.LAND && overshootSafe(world, tx + dx, y, tz + dz)) {
-                    moves.add(new Move(to, jumpRun(distance) + Costs.JUMP_PENALTY + dangerCost(world, to), MoveType.PARKOUR, 0));
+                    moves.add(new Move(to, jumpRun(settings, distance, 0) + Costs.JUMP_PENALTY + dangerCost(world, to), MoveType.PARKOUR, 0));
                 }
                 return;
             }
@@ -276,7 +298,7 @@ public final class Moves {
             if (world.terrainAt(tx, y - 1, tz) == Terrain.SOLID) {
                 Cell to = new Cell(tx, y, tz);
                 if (overshootSafe(world, tx + side[0], y, tz + side[1])) {
-                    double cost = jumpRun(distance) + Costs.JUMP_PENALTY + Costs.fall(drop) + dangerCost(world, to);
+                    double cost = jumpRun(settings, distance, -drop) + Costs.JUMP_PENALTY + dangerCost(world, to);
                     moves.add(new Move(to, cost, MoveType.PARKOUR, 0));
                 }
                 return;
@@ -289,7 +311,7 @@ public final class Moves {
      * one block back: from `from` it sprints across the takeoff block, jumps, and lands 6 blocks along. It has little
      * margin for error, so it costs extra and is only chosen when it saves real time.
      */
-    private static void addRunJump(BlockView world, Cell from, int[] side, List<Move> moves) {
+    private static void addRunJump(BlockView world, Cell from, int[] side, PathSettings settings, List<Move> moves) {
         int dx = side[0];
         int dz = side[1];
         Cell takeoff = new Cell(from.x() + dx, from.y(), from.z() + dz);
@@ -310,7 +332,7 @@ public final class Moves {
                 || !overshootSafe(world, to.x() + dx, y, to.z() + dz)) {
             return;
         }
-        double cost = Costs.SPRINT * 6 + Costs.JUMP_PENALTY + Costs.RISKY_JUMP_PENALTY + dangerCost(world, to);
+        double cost = jumpRun(settings, 6, 0) + Costs.JUMP_PENALTY + Costs.RISKY_JUMP_PENALTY + dangerCost(world, to);
         moves.add(new Move(to, cost, MoveType.RUN_JUMP, 0));
     }
 
@@ -320,6 +342,9 @@ public final class Moves {
      * since anywhere with a floor beside it walking round is the better move. {@link JumpSim} decides if it lands.
      */
     private static void addNeos(BlockView world, Cell from, int[] side, PathSettings settings, List<Move> moves) {
+        if (!settings.allowLongJumps()) {
+            return; // a neo is a sprint-jump, which is only planned near vanilla speed
+        }
         int x = from.x();
         int y = from.y();
         int z = from.z();
@@ -347,7 +372,7 @@ public final class Moves {
                 continue;
             }
             if (JumpSim.neo(world, from, to) != null) {
-                double cost = Costs.SPRINT * (distance + 1) + Costs.JUMP_PENALTY + Costs.RISKY_JUMP_PENALTY + dangerCost(world, to);
+                double cost = jumpRun(settings, distance + 1, 0) + Costs.JUMP_PENALTY + Costs.RISKY_JUMP_PENALTY + dangerCost(world, to);
                 moves.add(new Move(to, cost, MoveType.NEO, 0));
             }
         }
@@ -374,6 +399,9 @@ public final class Moves {
      * fancy way to do what walking does. {@link JumpSim} decides if it lands.
      */
     private static void addSideJumps(BlockView world, Cell from, int[] side, PathSettings settings, List<Move> moves) {
+        if (!settings.allowLongJumps()) {
+            return;
+        }
         int x = from.x();
         int y = from.y();
         int z = from.z();
@@ -396,8 +424,7 @@ public final class Moves {
                         continue;
                     }
                     if (JumpSim.side(world, from, to) != null) {
-                        double height = rise > 0 ? Costs.JUMP_UP : rise < 0 ? Costs.fall(1) : 0;
-                        double cost = jumpRun(distance) + Costs.SPRINT + Costs.JUMP_PENALTY + height + dangerCost(world, to);
+                        double cost = jumpRun(settings, distance, rise) + settings.profile().sprint() + Costs.JUMP_PENALTY + dangerCost(world, to);
                         moves.add(new Move(to, cost, MoveType.SIDE_JUMP, 0));
                     }
                 }
@@ -405,9 +432,14 @@ public final class Moves {
         }
     }
 
-    /** Time to cover a jump's distance: plain jumps at walking pace, sprint-jumps at sprinting pace. */
-    private static double jumpRun(int distance) {
-        return distance < 4 ? Costs.WALK * distance : Costs.SPRINT * distance;
+    /**
+     * Ticks a jump takes: the run across the distance, plain jumps at walking pace and sprint-jumps at sprinting pace, but
+     * never less than the time the body spends in the air. At a high speed it is the air time that counts, which is why a
+     * fast player gets little out of jumping.
+     */
+    private static double jumpRun(PathSettings settings, int distance, int rise) {
+        double perBlock = distance < 4 ? settings.profile().walk() : settings.profile().sprint();
+        return Math.max(perBlock * distance, Costs.jumpAirTicks(rise));
     }
 
     private static void addWaterMove(BlockView world, Cell to, double cost, MoveType type, int submerged, List<Move> moves) {
@@ -417,8 +449,24 @@ public final class Moves {
         }
     }
 
-    private static double flatCost(Kind fromKind, PathSettings settings) {
-        return settings.allowSprint() && fromKind == Kind.LAND ? Costs.SPRINT : Costs.WALK;
+    /**
+     * Ticks to cover one block of flat ground into `to`. Walking, sprinting, or, when hopping beats sprinting at this speed
+     * and there is room to hop (three clear blocks above the feet at both ends), a sprint-jump chain.
+     */
+    private static double flatCost(BlockView world, Cell from, Kind fromKind, PathSettings settings, Cell to) {
+        if (!settings.allowSprint() || fromKind != Kind.LAND) {
+            return settings.profile().walk();
+        }
+        if (settings.profile().hops() && settings.allowParkour() && hopRoom(world, from) && hopRoom(world, to)) {
+            return settings.profile().hop();
+        }
+        return settings.profile().sprint();
+    }
+
+    /** True if a hop fits at this cell: a hop lifts the head 1.25 blocks, so the blocks two and three above the feet must be open. */
+    public static boolean hopRoom(BlockView world, Cell cell) {
+        return world.terrainAt(cell.x(), cell.y() + 2, cell.z()) == Terrain.AIR
+                && world.terrainAt(cell.x(), cell.y() + 3, cell.z()) == Terrain.AIR;
     }
 
     private static double waterCost(PathSettings settings) {

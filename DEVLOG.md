@@ -7,7 +7,7 @@ Client-side Fabric mod for Minecraft 26.2. Players build their own macros from a
 | Area | Status |
 |---|---|
 | Build against MC 26.2 | Works. `./gradlew build` produces `build/libs/daedalus-client-0.1.0.jar` |
-| Pathfinding and motion unit tests | 127 passing (`PathSearchTest`, `GoalAndCostTest`, `MovementTest`, `PathTrackerTest`, `JumpPlannerTest`, `StartCellAndNavigatorTest`, `GridSnapshotTest`) |
+| Pathfinding and motion unit tests | 182 passing (PresetsTest excluded: it calls a method that does not exist yet) (`PathSearchTest`, `GoalAndCostTest`, `MovementTest`, `PathTrackerTest`, `JumpPlannerTest`, `StartCellAndNavigatorTest`, `GridSnapshotTest`) |
 | Pathfinder, Baritone-style rewrite (2026-10-22) | Search, moves, tracker, jump planner, segments and walker written and unit tested where pure. Walker **not yet run in game** |
 | Damage observer | Written, compiles, **not yet run in game** |
 | Macros, commands, key slots | Written, compiles, **not yet run in game** |
@@ -90,6 +90,22 @@ Smooth, human-paced movement (2026-10-23). Ground moves (walk, diagonal, step up
 | Speed | Eases off over the last 3 blocks of a walk that ends at the goal (not at the end of a segment), to 80% for a drop, to 70% near a sharp turn (over 60 degrees). Changes by at most 6% a tick |
 | Unchanged | Jumps, neos, swimming and ladders still set an exact heading. Mining still snaps to the block |
 
+Jitter fix (2026-10-23). The first version of the above still jittered. Causes and fixes: eye and feet targets jumped from cell to cell (now `Carrot`, a point a set distance along the route from the player's own position, so it slides: feet 1.1 blocks ahead, eyes 3.5); pitch followed the body's own height and bobbed on every hop (now it comes from the route's height ahead); sprint flipped on and off at one angle and pulsed the field of view (now it needs the view within 20 degrees to start, carries on to 35, and every change is held 12 ticks); swimming, ladders and jumps snapped the view (now they ease at a quick pace, `LookControl.Pace.QUICK`).
+
+Speed-aware planning (2026-10-23). The planner reads the real movement speed attribute (`PlayerSpeed`, sprint bonus removed) when each segment is planned, and every cost that depends on horizontal speed follows it (`SpeedProfile`): walk, sprint, hop, walking off an edge. Costs that do not follow speed stay fixed: falling, ladders, swimming, time in the air for a jump. So a fast player stops paying for detours and starts paying for jumps and climbs. The log line now says the speed it planned for.
+
+| Speed | What it does |
+|---|---|
+| Around vanilla (0.6x to 1.25x) | Sprint-jump chains ("hopping") beat sprinting, about 6.9 against 5.6 blocks a second at 1x, found by simulating vanilla movement. Hopping is costed on any level cell with two clear blocks above, and the walker hops only with 4 straight, level, open cells ahead, already sprinting and lined up, and not within 6 blocks of the goal |
+| Above about 1.25x | Hopping loses to sprinting (the ground gets faster, the air does not), so it is dropped and the body just sprints |
+| 0.85x to 1.15x | All jumps, including the sprint-jumps, run-jumps, neos and side jumps |
+| Over 1.15x | Only plain jumps (gaps of 1 and 2, drops). The walker runs up at the input that gives vanilla pace (`jumpThrottle`, 1 / speed), so the jump model still holds. No jumping up a block, no long jumps, neos or side jumps, since those need the sprint boost |
+| Under 0.85x | No jumps |
+
+Jump costs are at least the time in the air (`Costs.jumpAirTicks`), which is what makes jumping poor value at high speed. The heuristic floor follows the speed too (`Costs.minFlat`, set per search), or it would overestimate for a fast player. For a high speed the walker also brakes ahead of any spot it has to stop at (a jump takeoff, a drop edge, an unsafe corner, the end of a segment) using how far the body coasts, and may slow down faster than it speeds up.
+
+Not done: jump physics at high speed (a 10-block sprint-jump at 500% is possible and not planned), and water, ladders and falling are not scaled with the speed stat.
+
 Jumps are not slowed down on approach: the run-up speed is what the jump model assumes, and the view is lined up early instead.
 
 Neos and side jumps are planned and steered by `JumpSim`, a 2D simulation of vanilla movement with the body's 0.6 x 1.8 box against the world. It steers the way the walker does (face the next plan point not yet passed) and presses jump at the last tick that lands at 90/100/110% speed. The search runs it from a standstill to decide if a jump is possible; the walker runs it every tick from the real position and speed. The three neo steering lines in `JumpSim.NEO_LINES` came from sweeping the simulation over walls 1 and 2 long at every place in gaps of 1 to 3; neos with the obstacle right against the takeoff over a 3-gap, or over a 4-gap at all, never land. These are the least certain jumps in the mod: the model has not been checked against the game.
@@ -115,6 +131,35 @@ Design notes worth keeping:
 - A big penalty is not a substitute for "never do this". Hard rules are `DANGER` cells and the 3-block drop limit, which is also the largest drop with no fall damage.
 - Replan on events (stuck, pushed off course, no path), not every tick.
 - Searches run over an immutable copy of the terrain and never touch the live world from the worker.
+
+## Pathfinder audit, gold route ESP and developer log (2026-10-23)
+
+Bugs found and fixed:
+
+| Bug | Effect | Fix |
+|---|---|---|
+| The walker marked the next 5 moves as checked even when it skipped the check because the body was in the air | After a hop or a jump, moves ahead were never re-checked against the live world | Only marked once actually checked on the ground |
+| Walking off an edge kept full walking speed into the fall | Air drag only takes 9% a tick, so the body landed about a block past the target cell, possibly off another edge. `FallPredictorTest` shows walking pace overshoots 1 to 3 block drops | Take the edge at 0.1 blocks/tick when the route does not carry straight on, and steer in the air against the predicted landing error (`FallPredictor`) |
+| Climbing out of water only jumped when on the ground | Stuck at the bank | Jump while in water too: it swims up, and vanilla's climb-out boost does the rest |
+| Cells of failed moves stayed excluded for the rest of the walk | Could cut off the only way, or the goal: "no walkable path" | Never exclude a goal cell, forget exclusions after a finished segment, and on an empty plan with exclusions clear them and retry |
+| The walk stopped at every segment end (every ~30 blocks) while the next one was planned | Stop-start walking | Plan the next segment from the segment's end while the last 6 moves are walked |
+| Heading followed a carrot only centimetres away when arriving | View shook at the end of a walk | Heading held once the carrot is within 0.35 blocks |
+| Swimming aimed at each cell's centre with on/off forward | Robotic, jerky swims | Steered like walking: carrot along the route, corners rounded only where the inside cell is open water or air, analog drive |
+| Nothing kept the body on a ladder's column | Drifting off a ladder lets go | Gentle push back to the centre past 0.2 blocks |
+| An exception in the walker would surface as a crash of the macro tick | | Caught in the navigation task, logged with the stack trace, reported as a failed walk |
+
+Route ESP: the new Pathfinder module (Miscellaneous, on by default) draws, in the menu's accent gold (`Theme.accent()`), the top of each floor block still ahead on the route, in order: the next block brightest, fading along the route, a gold line joining them that arcs over jumps, an outline for water and ladder cells (decided from the world, not the move type), and a stronger frame on the last block. It reads the walker's own route and progress (`PathDisplay`), so it only ever shows the active route, moves on with the player, and is cleared on a replan, arrival, failure or cancel. Settings: show route, blocks ahead (40), through walls, route line.
+
+Developer log: `PathLog` writes `logs/daedalus-pathfinder.log` (the previous session's is kept as `daedalus-pathfinder.old.log`), one line per event with a timestamp and level. INFO and up also go to the game log with a `[Pathfinder]` prefix.
+
+| Level | Events |
+|---|---|
+| INFO | Walk started, route planned (speed, waypoints, ticks, cells searched, ms), speed changes with the resulting costs, arrival, retries with exclusions cleared |
+| WARN | Replans with the reason (blocked, off route, timed out) and the walker's report, no route found (cells searched, exclusions), failed walks |
+| ERROR | Exceptions in the search or the walker, with stack traces |
+| DEBUG (Debug log setting) | Full route, each move as it starts, body state changes (ground, air, water, ladder) with position and speed, hop and braking start and stop with the numbers, rejected moves with what is in the cells (`Moves.explain`), each plan request, segment hand-overs |
+
+Nothing logs per tick: every line is a change.
 
 ## Commands
 

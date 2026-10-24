@@ -37,6 +37,12 @@ public final class Costs {
      * the tightest). GoalAndCostTest checks these against real routes.
      */
     public static final double MIN_PER_BLOCK_FLAT = SPRINT;
+
+    /**
+     * The flat lower bound for the search running on this thread. A faster player covers ground for less, so their
+     * heuristic has to be smaller too, or it would overestimate. PathSearch sets it for the length of one search.
+     */
+    private static final ThreadLocal<Double> MIN_FLAT = ThreadLocal.withInitial(() -> SpeedProfile.vanilla().fastest());
     public static final double MIN_PER_BLOCK_UP = 3.0;
     public static final double MIN_PER_BLOCK_DOWN = 1.0;
 
@@ -49,6 +55,45 @@ public final class Costs {
     }
 
     private Costs() {}
+
+    /** Fewest ticks per block of flat ground, for heuristics. Vanilla speed unless a search on this thread says otherwise. */
+    public static double minFlat() {
+        return MIN_FLAT.get();
+    }
+
+    public static void useMinFlat(double perBlock) {
+        MIN_FLAT.set(perBlock);
+    }
+
+    public static void resetMinFlat() {
+        MIN_FLAT.set(SpeedProfile.vanilla().fastest());
+    }
+
+    /** Ticks in the air for a jump that lands `rise` blocks above (positive) or below (negative) where it took off. */
+    public static double jumpAirTicks(int rise) {
+        return JUMP_AIR[Math.max(-3, Math.min(1, rise)) + 3];
+    }
+
+    private static final double[] JUMP_AIR = new double[5];
+
+    static {
+        for (int rise = -3; rise <= 1; rise++) {
+            double y = 0;
+            double vy = 0.42;
+            double ticks = 0;
+            while (true) {
+                double next = y + vy;
+                if (vy < 0 && next <= rise) {
+                    ticks += (y - rise) / (y - next);
+                    break;
+                }
+                y = next;
+                vy = (vy - 0.08) * 0.98;
+                ticks++;
+            }
+            JUMP_AIR[rise + 3] = ticks;
+        }
+    }
 
     /** Ticks to fall a whole number of blocks from a standstill. */
     public static double fall(int blocks) {

@@ -3,7 +3,10 @@ package com.slushybear.daedalus.module;
 import com.slushybear.daedalus.module.setting.Setting;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import net.minecraft.client.Minecraft;
 
 public abstract class Module {
@@ -77,20 +80,45 @@ public abstract class Module {
         return Collections.unmodifiableList(settings);
     }
 
+    /** Adds a setting under the "General" heading with no description. */
     protected <S extends Setting<?>> S addSetting(S setting) {
         settings.add(setting);
         return setting;
     }
 
-    /** What the Reset button does: settings and keybind back to defaults. Enabled is left alone. */
-    public void resetSettings() {
-        settings.forEach(Setting::reset);
-        keybind = defaultKeybind;
+    /**
+     * Adds a setting under a section heading, with a short description shown under its name.
+     * Returns the setting so the module can keep it in a field.
+     */
+    protected <S extends Setting<?>> S addSetting(String group, String description, S setting) {
+        setting.place(group, description);
+        return addSetting(setting);
     }
 
-    /** Everything back to defaults, including enabled. Used when a profile has nothing saved for this module. */
+    /** Settings sorted into their section headings. Sections and settings keep the order they were added in. */
+    public Map<String, List<Setting<?>>> groups() {
+        Map<String, List<Setting<?>>> out = new LinkedHashMap<>();
+        for (Setting<?> setting : settings) {
+            out.computeIfAbsent(setting.group(), group -> new ArrayList<>()).add(setting);
+        }
+        return out;
+    }
+
+    /** For the menu's search: true if the name or description contains the query, ignoring case. */
+    public boolean matches(String query) {
+        String q = query.trim().toLowerCase(Locale.ROOT);
+        return q.isEmpty() || (name + " " + description).toLowerCase(Locale.ROOT).contains(q);
+    }
+
+    /** What the Reset button does: every setting back to its default. The keybind and enabled are left alone. */
+    public void resetSettings() {
+        settings.forEach(Setting::reset);
+    }
+
+    /** Everything back to defaults, including enabled and the keybind. Used when a profile has nothing saved for this module. */
     public void resetAll() {
         resetSettings();
+        keybind = defaultKeybind;
         setEnabled(defaultEnabled);
     }
 

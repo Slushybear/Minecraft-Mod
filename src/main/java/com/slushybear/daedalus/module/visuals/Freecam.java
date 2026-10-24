@@ -22,7 +22,7 @@ public final class Freecam extends Module {
     /** Blocks per tick at speed 1. */
     private static final double BASE_SPEED = 0.5;
 
-    private final SliderSetting speed = addSetting(new SliderSetting("Speed", 1, 0.1, 5, 0.1));
+    private final SliderSetting speed = addSetting("Movement", "Flying speed. Sprint doubles it", new SliderSetting("Speed", 1, 0.1, 5, 0.1).unit("x"));
     private Vec3 pos;
     private Vec3 prevPos;
     private float yaw;

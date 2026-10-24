@@ -18,8 +18,8 @@ import net.minecraft.sounds.SoundEvents;
 public final class HitIndicator extends Module {
     private static final long SHOW_MS = 300;
 
-    private final BoolSetting sound = addSetting(new BoolSetting("Sound", false));
-    private final ChoiceSetting style = addSetting(new ChoiceSetting("Style", "Cross", "Cross", "Dot", "Ring"));
+    private final BoolSetting sound = addSetting("Feedback", "Play a click when a hit lands", new BoolSetting("Sound", false));
+    private final ChoiceSetting style = addSetting("Feedback", "Shape drawn on the crosshair", new ChoiceSetting("Style", "Cross", "Cross", "Dot", "Ring"));
     private long lastHit;
 
     public HitIndicator() {

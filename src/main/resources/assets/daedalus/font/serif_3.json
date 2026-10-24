@@ -1,0 +1,2 @@
+{ "providers": [ 
+  { "type": "ttf", "file": "daedalus:serif.ttf", "size": 14.0, "oversample": 3.0, "shift": [0.0, 0.0] } ] }

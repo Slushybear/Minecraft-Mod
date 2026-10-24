@@ -1,10 +1,10 @@
 package com.slushybear.daedalus.ui;
 
 import com.mojang.blaze3d.platform.Window;
+import com.slushybear.daedalus.automation.Macro;
 import com.slushybear.daedalus.automation.MacroManager;
 import com.slushybear.daedalus.config.DaedalusConfig;
 import com.slushybear.daedalus.module.Category;
-import com.slushybear.daedalus.module.KeyNames;
 import com.slushybear.daedalus.module.Module;
 import com.slushybear.daedalus.module.ModuleRegistry;
 import com.slushybear.daedalus.module.setting.BoolSetting;
@@ -15,9 +15,8 @@ import com.slushybear.daedalus.module.setting.Setting;
 import com.slushybear.daedalus.module.setting.SliderSetting;
 import com.slushybear.daedalus.module.setting.TextSetting;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
-import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
@@ -27,40 +26,33 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 /**
- * The Daedalus menu: title bar, sidebar, and then either a category's modules plus their settings, the macro editor,
- * or the client settings page. The controls themselves live in {@link Ui}.
+ * The Daedalus menu. Two panels in a rounded window:
  *
- * The menu picks its own size instead of following Minecraft's GUI Scale (see {@link #menuScale}), so it is the same
- * comfortable size on every screen and the pixel font stays sharp.
+ * - The sidebar: logo, search, the categories as an accordion (the open one's features hang off a thin "labyrinth"
+ *   path line), and a footer with the profile switcher and the theme and close buttons.
+ * - The content panel: the selected feature's settings, the macro editor, or the client settings page.
+ *
+ * What is open and selected lives in {@link MenuState}; the controls are drawn by {@link Ui}; every colour and size
+ * comes from {@link Theme}. The menu picks its own size instead of following Minecraft's GUI Scale (see
+ * {@link #menuScale}), so it is the same comfortable size on every screen and the pixel font stays sharp.
  */
 public final class DaedalusScreen extends Screen {
-    private static final int MAX_W = 560;
-    private static final int MAX_H = 330;
-    private static final int TITLE_H = 22;
-    private static final int FOOT_H = 14;
-    private static final int CARD_H = 24;
-    private static final int CARD_GAP = 3;
-    private static final String VERSION = "v" + FabricLoader.getInstance().getModContainer("daedalus")
-            .map(mod -> mod.getMetadata().getVersion().getFriendlyString()).orElse("?");
     private static final List<String> SCALE_OPTIONS = List.of("Auto", "1x", "2x", "3x", "4x");
 
-    // Remembered between openings, so the menu reopens where you left it.
-    private static Category category = Category.COMBAT;
-    private static Module selected;
-    private static boolean settingsPage;
+    /** Kept between openings, so the menu reopens where you left it. */
+    private static final MenuState STATE = new MenuState(ModuleRegistry::all);
 
     private final Ui ui;
     private final MacroEditor macroEditor;
-    private final Ui.Scroll listScroll = new Ui.Scroll();
-    private final Ui.Scroll panelScroll = new Ui.Scroll();
-    private final Ui.Scroll settingsScroll = new Ui.Scroll();
-    private String query = "";
+    private final Ui.Scroll sideScroll = new Ui.Scroll();
+    private final Ui.Scroll contentScroll = new Ui.Scroll();
+    /** What the content panel showed last frame. When it changes, the content scrolls back to the top. */
+    private Object shown;
 
     /** GUI pixels per menu pixel, from the last frame. Mouse positions are divided by this. */
     private float scale = 1;
     private int wx, wy, ww, wh;
-    private int sideW;
-    private int panelW;
+    private int sideRight;
 
     public DaedalusScreen() {
         super(Component.literal("Daedalus"));
@@ -110,7 +102,7 @@ public final class DaedalusScreen extends Screen {
     /** The dark layer over the game world. Replaces vanilla's blur. */
     @Override
     public void extractBackground(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
-        graphics.fill(0, 0, width, height, Theme.withAlpha(0x06040a, Theme.dim() / 100f));
+        graphics.fill(0, 0, width, height, Theme.withAlpha(0x050505, Theme.dim() / 100f));
     }
 
     @Override
@@ -125,336 +117,337 @@ public final class DaedalusScreen extends Screen {
 
         int screenW = (int) (width / scale);
         int screenH = (int) (height / scale);
-        ww = Math.min(screenW - 16, MAX_W);
-        wh = Math.min(screenH - 16, MAX_H);
+        ww = Math.min(screenW - 16, Theme.MAX_WINDOW_W);
+        wh = Math.min(screenH - 16, Theme.MAX_WINDOW_H);
         wx = (screenW - ww) / 2;
         wy = (screenH - wh) / 2;
-        boolean compact = ww < 500;
-        sideW = compact ? 108 : 124;
-        panelW = compact ? 132 : 156;
+        sideRight = wx + Math.max(118, Math.round(ww * Theme.SIDEBAR_FRACTION));
 
-        boolean macros = !settingsPage && !searching() && category == Category.MACROS;
-        drawFrame(!settingsPage && !macros);
-        drawTitleBar();
+        drawFrame();
         drawSidebar();
-        if (settingsPage) {
-            drawSettingsPage();
-        } else if (macros) {
-            macroEditor.draw(sidebarRight() + 1, mainTop(), wx + ww - 1, mainBottom());
-        } else {
-            drawModuleList();
-            drawPanel();
-        }
-        drawFooter();
-        ui.drawToast(wx + ww - 10, mainBottom() - 8, ww / 2);
+        drawContent();
+        ui.drawToast(wx + ww - 10, wy + wh - 8, ww / 2);
+        ui.drawPopup(wy + wh - 4);
 
         ui.endFrame();
         graphics.pose().popMatrix();
     }
 
-    private int mainTop() {
-        return wy + TITLE_H;
-    }
-
-    private int mainBottom() {
-        return wy + wh - FOOT_H;
-    }
-
-    private int sidebarRight() {
-        return wx + sideW;
-    }
-
-    private int panelLeft() {
-        return wx + ww - 1 - panelW;
-    }
-
-    private void drawFrame(boolean withPanel) {
-        int r = (Theme.radius() + 4) / 2;
+    /** The window: a 1 pixel border, the sidebar on the left and the darker content panel on the right. */
+    private void drawFrame() {
+        int r = Theme.windowCorner();
         ui.round(wx, wy, ww, wh, r, Theme.line());
-        // The whole inside starts as the sidebar colour, which also covers the title bar and footer.
         ui.round(wx + 1, wy + 1, ww - 2, wh - 2, Math.max(0, r - 1), Theme.side());
-        int right = wx + ww - 1;
-        ui.g.fill(sidebarRight() + 1, mainTop(), right, mainBottom(), Theme.bg());
-        if (withPanel) {
-            ui.g.fill(panelLeft() + 1, mainTop(), right, mainBottom(), Theme.panel());
-            ui.g.fill(panelLeft(), mainTop(), panelLeft() + 1, mainBottom(), Theme.line());
-        }
-        ui.g.fill(wx + 1, mainTop() - 1, right, mainTop(), Theme.line());
-        ui.g.fill(wx + 1, mainBottom(), right, mainBottom() + 1, Theme.line());
-        ui.g.fill(sidebarRight(), mainTop(), sidebarRight() + 1, mainBottom(), Theme.line());
+        int contentX = sideRight + 1;
+        ui.round(contentX, wy + 1, wx + ww - 1 - contentX, wh - 2, Math.max(0, r - 1), Theme.bg());
+        // Square off the content panel's left corners, where it meets the sidebar.
+        ui.g.fill(contentX, wy + 1, contentX + r, wy + wh - 1, Theme.bg());
+        ui.g.fill(sideRight, wy + 1, sideRight + 1, wy + wh - 1, Theme.line());
     }
 
-    private void drawTitleBar() {
-        int cy = wy + TITLE_H / 2;
-        int x = wx + 9;
-        ui.icon(Icons.LOGO, x, cy - 4, Theme.accent());
-        x += Icons.SIZE + 5;
-        Component logo = Component.literal("DAEDALUS").withStyle(ChatFormatting.BOLD);
-        ui.g.text(font, logo, x, cy - 3, Theme.text(), false);
-        x += font.width(logo) + 6;
-        int versionW = font.width(VERSION) + 8;
-        ui.box(x, cy - 6, versionW, 12, Theme.side(), Theme.line());
-        ui.text(VERSION, x + 4, cy - 3, Theme.muted());
-        int leftEdge = x + versionW + 8;
+    // =====================================================================================================
+    // Sidebar
+    // =====================================================================================================
 
-        // Right side, from the right edge inward.
-        int rx = wx + ww - 7 - 16;
-        ui.iconButton(rx, cy - 8, 16, Icons.CLOSE, this::onClose);
-        rx -= 20;
-        ui.iconButton(rx, cy - 8, 16, Icons.GEAR, () -> {
-            settingsPage = !settingsPage;
-            clearSearch();
-        });
-        rx = profileButton(rx - 4, cy - 8);
-        int searchW = Math.min(130, rx - 4 - leftEdge);
-        if (searchW >= 60) {
-            ui.searchBox("search", rx - 4 - searchW, cy - 8, searchW, 16, query, this::setQuery);
+    private void drawSidebar() {
+        int left = wx + 1;
+        int right = sideRight;
+
+        // Header: logo and the serif wordmark.
+        ui.logo(left + 8, wy + 7, Theme.LOGO_SIZE);
+        ui.wordmark("Daedalus", left + 8 + Theme.LOGO_SIZE + 5, wy + 11, Theme.text());
+
+        // Search.
+        int searchY = wy + Theme.SIDEBAR_HEADER_H;
+        ui.searchBox("search", left + 6, searchY, right - left - 12, Theme.SEARCH_H, STATE.query(), "Find a feature",
+                this::setQuery);
+
+        // The category list scrolls between the search box and the footer.
+        int footerTop = wy + wh - Theme.SIDEBAR_FOOTER_H;
+        int listTop = searchY + Theme.SEARCH_H + 5;
+        int y = ui.beginScroll(left, listTop, right, footerTop, sideScroll) + 2;
+        if (STATE.noResults()) {
+            int cx = left;
+            int cw = right - left;
+            ui.textCentered("No features match", cx, cw, y + 18, Theme.text());
+            ui.textCentered("Try a different name.", cx, cw, y + 30, Theme.secondary());
+            y += 44;
         }
+        for (Category category : STATE.visibleCategories()) {
+            y = categoryHeader(category, left, y, right);
+            y = branch(category, left, y);
+        }
+        if (!STATE.searching()) {
+            boolean on = STATE.page() == MenuState.Page.SETTINGS;
+            y = headerRow("settings", Icons.GEAR, "Settings", null, on, left, y, right, STATE::openSettings);
+        }
+        ui.endScroll(sideScroll, y + 4);
+
+        drawFooter(left, footerTop, right);
     }
 
-    /** The profile chip, placed by its right edge. Click to cycle profiles. Returns its left edge. */
-    private int profileButton(int right, int y) {
-        String name = DaedalusConfig.activeProfile();
-        int w = font.width(name) + Icons.SIZE + 16;
-        int x = right - w;
-        boolean hovered = ui.hover(x, y, w, 16);
-        ui.box(x, y, w, 16, Theme.card(), hovered ? Theme.accent() : Theme.line());
-        int color = hovered ? Theme.text() : Theme.muted();
-        ui.icon(Icons.PERSON, x + 6, y + 4, color);
-        ui.text(name, x + 6 + Icons.SIZE + 4, Ui.textY(y, 16), color);
-        ui.hit(x, y, w, 16, Ui.left(() -> loadProfile(DaedalusConfig.nextProfile())));
-        return x;
+    /** A category row: icon, name and an on/total count. Clicking it opens or closes the category. */
+    private int categoryHeader(Category category, int left, int y, int right) {
+        boolean open = STATE.isExpanded(category);
+        String count;
+        if (category == Category.MACROS) {
+            List<Macro> macros = MacroManager.all();
+            int on = (int) macros.stream().filter(m -> !m.paused()).count();
+            count = (on > 0 ? on + "/" : "") + macros.size();
+        } else {
+            int on = STATE.enabledCount(category);
+            count = (on > 0 ? on + "/" : "") + STATE.totalCount(category);
+        }
+        Runnable onClick = () -> {
+            if (!STATE.searching()) {
+                STATE.toggleCategory(category);
+            }
+        };
+        return headerRow(category.name(), Icons.of(category), category.label(), count, open, left, y, right, onClick);
+    }
+
+    private int headerRow(String id, String[] icon, String label, String count, boolean open, int left, int y, int right,
+                          Runnable onClick) {
+        int h = Theme.CATEGORY_H;
+        float hover = ui.hoverFade("cat:" + id, left, y, right - left, h);
+        int color = open ? Theme.text() : Theme.mix(Theme.text(), Theme.secondary(), hover);
+        ui.icon(icon, left + 8, y + (h - Icons.SIZE) / 2, open ? Theme.accent() : color);
+        int countW = 0;
+        if (count != null) {
+            // The "on" part of the count is gold; the total is muted.
+            int slash = count.indexOf('/');
+            String total = slash < 0 ? count : count.substring(slash);
+            int tx = right - 8 - ui.width(total);
+            ui.text(total, tx, Ui.textY(y, h), Theme.muted());
+            if (slash >= 0) {
+                String on = count.substring(0, slash);
+                ui.text(on, tx - ui.width(on), Ui.textY(y, h), Theme.accent());
+            }
+            countW = ui.width(count) + 6;
+        }
+        ui.text(ui.truncate(label, right - left - 28 - countW), left + 20, Ui.textY(y, h), color);
+        ui.hit(left, y, right - left, h, Ui.left(onClick));
+        return y + h;
+    }
+
+    /**
+     * The open category's features, hanging off a vertical path line, each with a short tick. The selected one gets a
+     * gold diamond on the line, a gold tick and light gold text. Opening and closing slides over about 120 ms.
+     * Returns the y below the branch.
+     */
+    private int branch(Category category, int left, int y) {
+        boolean macros = category == Category.MACROS;
+        List<Macro> macroList = macros ? MacroManager.all() : List.of();
+        List<Module> modules = macros ? List.of() : STATE.modulesUnder(category);
+        int items = macros ? macroList.size() + 1 : Math.max(1, modules.size());
+        int fullH = items * Theme.BRANCH_ITEM_H + 4;
+        float t = ui.anim.to("branch:" + category.name(), STATE.isExpanded(category) ? 1 : 0, Theme.ACCORDION_MS);
+        int shownH = Math.round(fullH * t);
+        if (shownH <= 0) {
+            return y;
+        }
+        int lineX = left + Theme.BRANCH_INDENT;
+        ui.g.fill(lineX, y, lineX + 1, y + shownH - 2, Theme.pathLine());
+        int iy = y + 2;
+        int limit = y + shownH;
+        if (macros) {
+            String selectedName = STATE.page() == MenuState.Page.MACROS ? MacroEditor.selectedName() : null;
+            for (Macro macro : macroList) {
+                if (iy + Theme.BRANCH_ITEM_H > limit) {
+                    break;
+                }
+                branchItem("macro:" + macro.name(), macro.name(), macro.name().equals(selectedName), !macro.paused(),
+                        lineX, iy, () -> {
+                            macroEditor.select(macro);
+                            STATE.openMacros();
+                        });
+                iy += Theme.BRANCH_ITEM_H;
+            }
+            if (iy + Theme.BRANCH_ITEM_H <= limit) {
+                branchItem("macro:new", "+ New macro", false, false, lineX, iy, () -> {
+                    macroEditor.newMacro();
+                    STATE.openMacros();
+                });
+            }
+        } else if (modules.isEmpty()) {
+            if (iy + Theme.BRANCH_ITEM_H <= limit) {
+                ui.g.fill(lineX + 1, iy + 6, lineX + 1 + Theme.PATH_TICK, iy + 7, Theme.pathLine());
+                ui.text("Nothing here yet", lineX + Theme.PATH_TICK + 5, Ui.textY(iy, Theme.BRANCH_ITEM_H), Theme.muted());
+            }
+        } else {
+            boolean showingModule = STATE.page() == MenuState.Page.MODULE;
+            for (Module module : modules) {
+                if (iy + Theme.BRANCH_ITEM_H > limit) {
+                    break;
+                }
+                branchItem("module:" + module.name(), module.name(), showingModule && module == STATE.selected(),
+                        module.enabled(), lineX, iy, () -> STATE.selectModule(module));
+                iy += Theme.BRANCH_ITEM_H;
+            }
+        }
+        return y + shownH;
+    }
+
+    private void branchItem(String id, String name, boolean selected, boolean enabled, int lineX, int y, Runnable onClick) {
+        int h = Theme.BRANCH_ITEM_H;
+        int textX = lineX + Theme.PATH_TICK + 5;
+        int w = sideRight - 6 - lineX;
+        float hover = ui.hoverFade(id, lineX, y, w, h);
+        int mid = y + h / 2;
+        ui.g.fill(lineX + 1, mid, lineX + 1 + Theme.PATH_TICK, mid + 1, selected ? Theme.accent() : Theme.pathLine());
+        if (selected) {
+            ui.diamond(lineX + 0.5f, mid + 0.5f, Theme.PATH_MARKER + 1, Theme.accent());
+        }
+        int color = selected ? Theme.accentLight() : Theme.mix(Theme.text(), Theme.secondary(), hover);
+        String label = ui.truncate(name, sideRight - 8 - textX - (enabled ? 6 : 0));
+        ui.text(label, textX, Ui.textY(y, h), color);
+        if (enabled) {
+            int dotX = textX + ui.width(label) + 3;
+            ui.round(dotX, mid - 1, Theme.ENABLED_DOT, Theme.ENABLED_DOT, 1, Theme.accent());
+        }
+        ui.hit(lineX - 4, y, w + 4, h, Ui.left(onClick));
+    }
+
+    /** Profile switcher on the left; theme and close buttons on the right. */
+    private void drawFooter(int left, int top, int right) {
+        ui.g.fill(left, top, right, top + 1, Theme.line());
+        ui.spaced("PROFILE", left + 8, top + 5, Theme.muted());
+        int buttonW = Math.min(76, right - left - 50);
+        ui.dropdown("profile", left + 8, top + 14, buttonW, 12, DaedalusConfig.PROFILES, DaedalusConfig.activeProfile(),
+                this::loadProfile);
+        int iconY = top + (Theme.SIDEBAR_FOOTER_H - 11) / 2 + 1;
+        ui.plainIcon(right - 6 - 11, iconY, 11, Icons.CLOSE, this::onClose);
+        ui.plainIcon(right - 6 - 11 - 13, iconY, 11, Icons.PALETTE, STATE::openSettings);
     }
 
     private void setQuery(String text) {
-        query = text;
-        listScroll.reset();
-        if (!text.isBlank()) {
-            settingsPage = false;
-        }
+        STATE.setQuery(text);
+        sideScroll.reset();
     }
 
-    private boolean searching() {
-        return !query.isBlank();
-    }
+    // =====================================================================================================
+    // Content panel
+    // =====================================================================================================
 
-    private void clearSearch() {
-        query = "";
-        if (ui.isFocused("search")) {
-            ui.commitFocus();
-        }
-    }
-
-    private void drawSidebar() {
-        int x = wx + 5;
-        int w = sideW - 9;
-        int y = mainTop() + 5;
-        boolean showingCategory = !settingsPage && !searching();
-        for (Category c : Category.values()) {
-            String count;
-            if (c == Category.MACROS) {
-                count = String.valueOf(MacroManager.all().size());
-            } else {
-                List<Module> modules = ModuleRegistry.in(c);
-                count = modules.isEmpty() ? null : ModuleRegistry.enabledCount(modules) + "/" + modules.size();
-            }
-            navItem(c.name(), x, y, w, Icons.of(c), c.label(), count, showingCategory && category == c, () -> openCategory(c));
-            y += 16;
-        }
-        navItem("settings", x, mainBottom() - 19, w, Icons.GEAR, "Settings", null, settingsPage, () -> {
-            settingsPage = true;
-            clearSearch();
-        });
-    }
-
-    private void openCategory(Category c) {
-        if (category != c) {
-            listScroll.reset();
-        }
-        category = c;
-        settingsPage = false;
-        clearSearch();
-    }
-
-    private void navItem(String id, int x, int y, int w, String[] icon, String label, String count, boolean active,
-                         Runnable onClick) {
-        int h = 14;
-        float hover = ui.hoverFade("nav:" + id, x, y, w, h);
-        if (active) {
-            ui.round(x, y, w, h, Theme.corner(h), Theme.card());
-        } else if (hover > 0) {
-            ui.round(x, y, w, h, Theme.corner(h), Theme.mix(Theme.accent(), Theme.side(), 0.08 * hover));
-        }
-        int color = active ? Theme.text() : Theme.mix(Theme.text(), Theme.muted(), hover);
-        ui.icon(icon, x + 4, y + (h - Icons.SIZE) / 2, active ? Theme.accent() : color);
-        int countW = count == null ? 0 : font.width(count) + 4;
-        ui.text(ui.truncate(label, w - 16 - countW - 2), x + 15, Ui.textY(y, h), color);
-        if (count != null) {
-            ui.textRight(count, x + w - 4, Ui.textY(y, h), Theme.muted());
-        }
-        ui.hit(x, y, w, h, Ui.left(onClick));
-    }
-
-    // ---- Module list (middle column) ----
-
-    private void drawModuleList() {
-        int left = sidebarRight() + 1;
-        int right = panelLeft();
-        int x = left + 8;
-        int w = right - left - 16;
-        int y = mainTop() + 7;
-
-        List<Module> modules;
-        String eyebrow;
-        String heading;
-        String meta;
-        if (searching()) {
-            modules = ModuleRegistry.search(query);
-            eyebrow = "SEARCH";
-            heading = modules.size() + (modules.size() == 1 ? " result" : " results");
-            meta = "\"" + query.trim() + "\"";
-        } else {
-            modules = ModuleRegistry.in(category);
-            eyebrow = "CATEGORY";
-            heading = category.label();
-            meta = ModuleRegistry.enabledCount(modules) + " of " + modules.size() + " enabled";
-        }
-        ui.text(eyebrow, x, y, Theme.accent());
-        ui.heading(heading, x, y + 11, Theme.text());
-        ui.textRight(ui.truncate(meta, w / 2), x + w, y + 3, Theme.muted());
-
-        int top = y + 30;
-        int cy = ui.beginScroll(left, top, right, mainBottom() - 4, listScroll);
-        if (modules.isEmpty()) {
-            String empty = searching() ? "No modules match that search." : "Nothing here yet.";
-            cy = ui.wrapped(empty, x, cy + 10, w, Theme.muted());
-        }
-        for (Module module : modules) {
-            moduleCard(module, x, cy, w);
-            cy += CARD_H + CARD_GAP;
-        }
-        ui.endScroll(listScroll, cy);
-    }
-
-    private void moduleCard(Module module, int x, int y, int w) {
-        boolean isSelected = module == selected;
-        float hover = ui.hoverFade("card:" + module.name(), x, y, w, CARD_H);
-        int border = isSelected ? Theme.accent()
-                : Theme.mix(Theme.mix(Theme.accent(), Theme.line(), 0.55), Theme.line(), hover);
-        ui.box(x, y, w, CARD_H, isSelected ? Theme.cardSelected() : Theme.card(), border);
-
-        // Left click selects, right click toggles. Added before the switch so the switch's own hit wins.
-        ui.hit(x, y, w, CARD_H, (button, mx, my) -> {
-            if (button == 0) {
-                select(module);
-            } else if (button == 1) {
-                setEnabled(module, !module.enabled());
-            }
-        });
-
-        int toggleX = x + w - 7 - Ui.TOGGLE_W;
-        ui.toggle("card:" + module.name(), toggleX, y + (CARD_H - Ui.TOGGLE_H) / 2, module.enabled(),
-                () -> setEnabled(module, !module.enabled()));
-
-        int textRight = toggleX - 6;
-        if (!KeyNames.isNone(module.keybind())) {
-            String key = KeyNames.display(module.keybind());
-            int keyW = Math.min(w / 3, font.width(key) + 8);
-            textRight -= keyW;
-            ui.box(textRight, y + 6, keyW, 12, Theme.card(), Theme.line());
-            ui.text(ui.truncate(key, keyW - 6), textRight + 4, y + 8, Theme.muted());
-            textRight -= 6;
-        }
-
-        int textX = x + 7;
-        int nameColor = module.enabled() ? Theme.text() : Theme.mix(Theme.text(), Theme.card(), 0.72);
-        String name = ui.truncate(module.name(), textRight - textX);
-        ui.text(name, textX, y + 4, nameColor);
-        if (searching()) {
-            // In search results, show which category each module came from.
-            String tag = module.category().label();
-            int tagX = textX + font.width(name) + 5;
-            int tagW = font.width(tag) + 6;
-            if (tagX + tagW <= textRight) {
-                ui.box(tagX, y + 3, tagW, 11, Theme.card(), Theme.line());
-                ui.text(tag, tagX + 3, y + 5, Theme.accent());
-            }
-        }
-        ui.text(ui.truncate(module.description(), textRight - textX), textX, y + 14, Theme.muted());
-    }
-
-    private void select(Module module) {
-        if (selected != module) {
-            selected = module;
-            panelScroll.reset();
-        }
-    }
-
-    // ---- Settings panel (right column) ----
-
-    private void drawPanel() {
-        int left = panelLeft() + 1;
+    private void drawContent() {
+        int left = sideRight + 1;
         int right = wx + ww - 1;
-        int x = left + 8;
-        int w = right - left - 16;
-        Module module = selected;
-        boolean visible = module != null && (searching() || module.category() == category);
-        if (!visible) {
-            ui.wrapped("Select a module to edit its settings.", x, mainTop() + 30, w, Theme.muted());
+        int top = wy + 1;
+        int bottom = wy + wh - 1;
+
+        Object now = switch (STATE.page()) {
+            case MODULE -> STATE.selected();
+            case MACROS -> "macros";
+            case SETTINGS -> "settings";
+        };
+        if (now != shown) {
+            shown = now;
+            contentScroll.reset();
+        }
+
+        switch (STATE.page()) {
+            case MACROS -> macroEditor.draw(left, top, right, bottom);
+            case SETTINGS -> drawSettingsPage(left, top, right, bottom);
+            case MODULE -> drawModulePage(left, top, right, bottom);
+        }
+    }
+
+    private void drawModulePage(int left, int top, int right, int bottom) {
+        Module module = STATE.selected();
+        int x = left + Theme.CONTENT_PAD_X;
+        int w = right - left - 2 * Theme.CONTENT_PAD_X;
+        if (module == null) {
+            ui.text("Pick a feature on the left.", x, top + 30, Theme.secondary());
             return;
         }
+        int y = ui.beginScroll(left, top, right, bottom, contentScroll) + Theme.CONTENT_PAD_Y;
+        ui.breadcrumb(module.category().label(), module.name(), x, y);
+        y += 14;
 
-        int y = ui.beginScroll(left, mainTop(), right, mainBottom(), panelScroll) + 9;
-        ui.text(module.category().label().toUpperCase(), x, y, Theme.accent());
-        int bx = x + w - 14;
-        ui.iconButton(bx, y - 3, 14, Icons.CLOSE, () -> selected = null);
-        int resetW = font.width("Reset") + 10;
-        bx -= resetW + 3;
-        ui.chip(bx, y - 3, resetW, 14, "Reset", () -> {
-            module.resetSettings();
+        // Header controls, right to left: the on/off switch, the keybind, and reset.
+        int switchX = x + w - Theme.SWITCH_W;
+        ui.toggle("module:" + module.name(), switchX, y + 4, module.enabled(), () -> setEnabled(module, !module.enabled()));
+        int bindW = ui.bindButton("key:" + module.name(), switchX - 8, y + 2, module.keybind(), module::setKeybind);
+        int resetX = switchX - 8 - bindW - 4 - 11;
+        ui.plainIcon(resetX, y + 3, 11, Icons.RESET, () -> {
+            STATE.resetSelected();
             ui.toast(module.name() + " reset", true);
         });
-        y += 15;
-        ui.text(ui.truncate(module.name(), w), x, y, Theme.text());
-        y += 13;
-        y = ui.wrapped(module.description() + ".", x, y, w, Theme.muted()) + 5;
 
-        String id = module.name();
-        y = ui.toggleRow("panel-on:" + id, "Enabled", x, y, w, module.enabled(), () -> setEnabled(module, !module.enabled()));
-        y = ui.bindRow("panel-key:" + id, "Keybind", x, y, w, module.keybind(), module::setKeybind);
-        ui.line(x, y, x + w);
-        y += 7;
-        for (Setting<?> setting : module.settings()) {
-            y = drawSetting(id + ":" + setting.name(), setting, x, y, w);
+        ui.heading(ui.truncateHeading(module.name(), resetX - x - 6), x, y, Theme.text());
+        y += 18;
+        y = ui.wrapped(module.description() + ".", x, y, w, Theme.secondary()) + 1;
+
+        Map<String, List<Setting<?>>> groups = module.groups();
+        if (groups.isEmpty()) {
+            y = ui.section("General", x, y, w);
+            ui.text("This feature has no settings. Use the switch above to turn it on.", x, y + 4, Theme.secondary());
+            y += 16;
         }
-        ui.endScroll(panelScroll, y + 4);
+        for (Map.Entry<String, List<Setting<?>>> group : groups.entrySet()) {
+            y = ui.section(group.getKey(), x, y, w);
+            List<Setting<?>> settings = group.getValue();
+            for (int i = 0; i < settings.size(); i++) {
+                y = settingRow(module.name(), settings.get(i), x, y, w, i == settings.size() - 1);
+            }
+        }
+        ui.endScroll(contentScroll, y + Theme.CONTENT_PAD_Y);
     }
 
-    /** Draws one setting at y and returns the y where the next one starts. */
-    private int drawSetting(String id, Setting<?> setting, int x, int y, int w) {
+    /** Draws one setting as a row: name and description on the left, its control on the right. Returns the next y. */
+    private int settingRow(String moduleName, Setting<?> setting, int x, int y, int w, boolean last) {
+        String id = moduleName + ":" + setting.name();
+        String label = setting.name();
+        String description = setting.description();
+        int column = Math.round(w * Theme.CONTROL_COLUMN);
         switch (setting) {
             case BoolSetting s -> {
-                return ui.toggleRow("set:" + id, s.name(), x, y, w, s.get(), s::toggle);
+                return row(label, description, x, y, w, Theme.CHECK_SIZE, Theme.CHECK_SIZE, last,
+                        (cx, cy) -> ui.checkbox(id, cx, cy, s.get(), s::toggle));
             }
             case SliderSetting s -> {
-                return ui.sliderRow(s.name(), s.format(), x, y, w, s.fraction(), s::setFraction);
+                return row(label, description, x, y, w, column, 8, last,
+                        (cx, cy) -> ui.sliderWithValue(cx, cy, column, s.fraction(), s.display(), s::setFraction));
             }
             case ChoiceSetting s -> {
-                ui.text(ui.truncate(s.name(), w), x, y, Theme.text());
-                ui.segmented(x, y + 11, w, 14, s.options(), s.get(), s::set);
-                return y + 31;
+                if (s.options().size() > Theme.MAX_SEGMENTS) {
+                    int dw = Math.min(column, 90);
+                    return row(label, description, x, y, w, dw, Ui.ROW_H, last,
+                            (cx, cy) -> ui.dropdown(id, cx, cy, dw, Ui.ROW_H, s.options(), s.get(), s::set));
+                }
+                int sw = Math.min(ui.segmentedWidth(s.options()), Math.round(w * 0.6f));
+                return row(label, description, x, y, w, sw, Ui.ROW_H, last,
+                        (cx, cy) -> ui.segmented(cx, cy, sw, Ui.ROW_H, s.options(), s.get(), s::set));
             }
             case KeybindSetting s -> {
-                return ui.bindRow("set:" + id, s.name(), x, y, w, s.get(), s::set);
-            }
-            case MultiChoiceSetting s -> {
-                ui.text(ui.truncate(s.name(), w), x, y, Theme.text());
-                return ui.chipGrid(x, y + 11, w, s.options(), s::has, s::toggle) + 7;
+                int bw = Math.max(36, ui.width("Press a key...") + Icons.SIZE + 14);
+                return row(label, description, x, y, w, bw, Ui.ROW_H, last,
+                        (cx, cy) -> ui.bindButton(id, cx + bw, cy, s.get(), s::set));
             }
             case TextSetting s -> {
-                ui.text(ui.truncate(s.name(), w), x, y, Theme.muted());
-                ui.textField("set:" + id, x, y + 11, w, 14, s.get(), "", TextSetting.MAX_LENGTH, Ui.ANY_TEXT, s::set);
-                return y + 31;
+                String error = s.draftError();
+                int h = Ui.ROW_H + (error == null ? 0 : 11);
+                return row(label, description, x, y, w, column, h, last, (cx, cy) -> {
+                    ui.textFieldError(id, cx, cy, column, Ui.ROW_H, s.shown(), TextSetting.MAX_LENGTH + 16, s::edit,
+                            error != null);
+                    if (error != null) {
+                        ui.text(ui.truncate(error, column), cx, cy + Ui.ROW_H + 3, Theme.danger());
+                    }
+                });
+            }
+            case MultiChoiceSetting s -> {
+                // Chips need the full width, so the name goes above them.
+                int top = y + Theme.ROW_PAD_Y;
+                ui.text(label, x, top, Theme.text());
+                if (!description.isEmpty()) {
+                    ui.text(ui.truncate(description, w), x, top + 10, Theme.secondary());
+                    top += 10;
+                }
+                int end = ui.chipGrid(x, top + 13, w, s.options(), s::has, s::toggle) + Theme.ROW_PAD_Y + 1;
+                if (!last) {
+                    ui.g.fill(x, end - 1, x + w, end, Theme.rowDivider());
+                }
+                return end;
             }
             default -> {
                 return y;
@@ -462,126 +455,121 @@ public final class DaedalusScreen extends Screen {
         }
     }
 
+    /** Draws a control at its top-left corner. */
+    private interface Control {
+        void draw(int x, int y);
+    }
+
+    /**
+     * One row of the content panel: label and optional description on the left, a control of the given size on the
+     * right, both centered vertically, and a faint line under it unless it is the last row in its section.
+     */
+    private int row(String label, String description, int x, int y, int w, int controlW, int controlH, boolean last,
+                    Control control) {
+        boolean hasDescription = description != null && !description.isEmpty();
+        int textH = hasDescription ? 18 : 8;
+        int rowH = Math.max(textH, controlH) + 2 * Theme.ROW_PAD_Y;
+        int textW = w - controlW - 10;
+        int ty = y + (rowH - textH) / 2;
+        ui.text(ui.truncate(label, textW), x, ty, Theme.text());
+        if (hasDescription) {
+            ui.text(ui.truncate(description, textW), x, ty + 10, Theme.secondary());
+        }
+        control.draw(x + w - controlW, y + (rowH - controlH) / 2);
+        if (!last) {
+            ui.g.fill(x, y + rowH - 1, x + w, y + rowH, Theme.rowDivider());
+        }
+        return y + rowH;
+    }
+
     // ---- Client settings page ----
 
-    private void drawSettingsPage() {
-        int left = sidebarRight() + 1;
-        int right = wx + ww - 1;
-        int x = left + 8;
-        int w = right - left - 16;
-        int y = mainTop() + 7;
-
-        ui.text("CLIENT", x, y, Theme.accent());
-        ui.heading("Settings", x, y + 11, Theme.text());
-        ui.chipRight(x + w, y + 4, "Reset all", () -> {
+    private void drawSettingsPage(int left, int top, int right, int bottom) {
+        int x = left + Theme.CONTENT_PAD_X;
+        int w = right - left - 2 * Theme.CONTENT_PAD_X;
+        int y = ui.beginScroll(left, top, right, bottom, contentScroll) + Theme.CONTENT_PAD_Y;
+        ui.breadcrumb("Client", "Settings", x, y);
+        y += 14;
+        int resetW = ui.chipRight(x + w, y + 3, "Reset all", () -> {
             Theme.reset();
             MenuKeys.resetKey();
             ui.toast("Settings reset", true);
         });
+        ui.heading(ui.truncateHeading("Settings", w - resetW - 6), x, y, Theme.text());
+        y += 18;
+        y = ui.wrapped("How the menu looks and behaves. Shared by every profile.", x, y, w, Theme.secondary()) + 1;
 
-        int sy = ui.beginScroll(left, y + 30, right, mainBottom() - 4, settingsScroll);
+        y = ui.section("Theme", x, y, w);
+        y = presets(x, y + 4, w) + 4;
+        int column = Math.round(w * Theme.CONTROL_COLUMN);
+        y = row("Accent colour", "Used for anything on, selected or focused", x, y, w, 80, Ui.ROW_H, false,
+                (cx, cy) -> colorField("hex-accent", cx, cy, Theme.accentRgb(), Theme::setAccent));
+        y = row("Text colour", "Labels; descriptions are a dimmer shade of it", x, y, w, 80, Ui.ROW_H, false,
+                (cx, cy) -> colorField("hex-text", cx, cy, Theme.textRgb(), Theme::setText));
+        y = row("Tint", "Mix the accent into the panels", x, y, w, column, 8, false,
+                (cx, cy) -> ui.sliderWithValue(cx, cy, column, Theme.tint() / (double) Theme.MAX_TINT, Theme.tint() + "%",
+                        f -> Theme.setTint((int) Math.round(f * Theme.MAX_TINT))));
+        y = row("Corner radius", "Roundness of the window and controls", x, y, w, column, 8, true,
+                (cx, cy) -> ui.sliderWithValue(cx, cy, column, Theme.radius() / (double) Theme.MAX_RADIUS,
+                        Theme.radius() + "px", f -> Theme.setRadius((int) Math.round(f * Theme.MAX_RADIUS))));
 
-        // Theme presets, full width.
-        int presetsH = 66;
-        section(x, sy, w, presetsH, "THEME");
-        int tileW = (w - 16 - 5 * 5) / 6;
-        for (int i = 0; i < Theme.PRESETS.size(); i++) {
-            presetTile(Theme.PRESETS.get(i), x + 8 + i * (tileW + 5), sy + 22, tileW, 36);
+        y = ui.section("Interface", x, y, w);
+        y = row("Animations", "Fades and slides in the menu", x, y, w, Theme.CHECK_SIZE, Theme.CHECK_SIZE, false,
+                (cx, cy) -> ui.checkbox("animations", cx, cy, Theme.animations(),
+                        () -> Theme.setAnimations(!Theme.animations())));
+        y = row("Smooth text", "Clean sans font; off uses Minecraft's pixel font", x, y, w, Theme.CHECK_SIZE,
+                Theme.CHECK_SIZE, false, (cx, cy) -> ui.checkbox("smooth-text", cx, cy, Theme.smoothText(),
+                        () -> Theme.setSmoothText(!Theme.smoothText())));
+        y = row("World dim", "How dark the game gets behind the menu", x, y, w, column, 8, false,
+                (cx, cy) -> ui.sliderWithValue(cx, cy, column, Theme.dim() / (double) Theme.MAX_DIM, Theme.dim() + "%",
+                        f -> Theme.setDim((int) Math.round(f * Theme.MAX_DIM))));
+        int scaleW = Math.min(ui.segmentedWidth(SCALE_OPTIONS), Math.round(w * 0.6f));
+        y = row("Menu size", "Auto fits the menu to your screen", x, y, w, scaleW, Ui.ROW_H, false,
+                (cx, cy) -> ui.segmented(cx, cy, scaleW, Ui.ROW_H, SCALE_OPTIONS, SCALE_OPTIONS.get(Theme.scale()),
+                        option -> Theme.setScale(SCALE_OPTIONS.indexOf(option))));
+        int bindW = Math.max(36, ui.width("Press a key...") + Icons.SIZE + 14);
+        y = row("Open menu", "Also in Minecraft's Controls", x, y, w, bindW, Ui.ROW_H, true,
+                (cx, cy) -> ui.bindButton("open-key", cx + bindW, cy, MenuKeys.keyName(), MenuKeys::setKey));
+
+        y = ui.section("Profiles", x, y, w);
+        int profilesW = Math.min(ui.segmentedWidth(DaedalusConfig.PROFILES), Math.round(w * 0.6f));
+        y = row("Active profile", "Each keeps its own features and keybinds", x, y, w, profilesW, Ui.ROW_H, true,
+                (cx, cy) -> ui.segmented(cx, cy, profilesW, Ui.ROW_H, DaedalusConfig.PROFILES,
+                        DaedalusConfig.activeProfile(), this::loadProfile));
+        ui.endScroll(contentScroll, y + Theme.CONTENT_PAD_Y);
+    }
+
+    /** The accent presets: a row of tiles, each a coloured diamond and a name. Returns the y below them. */
+    private int presets(int x, int y, int w) {
+        int gap = 4;
+        int n = Theme.PRESETS.size();
+        int tileW = (w - gap * (n - 1)) / n;
+        int h = 16;
+        for (int i = 0; i < n; i++) {
+            Theme.Preset preset = Theme.PRESETS.get(i);
+            int tx = x + i * (tileW + gap);
+            boolean on = Theme.accentRgb() == preset.color();
+            boolean hovered = ui.hover(tx, y, tileW, h);
+            ui.box(tx, y, tileW, h, hovered ? Theme.hover() : Theme.card(), on ? Theme.accent() : Theme.line());
+            ui.diamond(tx + 8.5f, y + h / 2f, 7, 0xFF000000 | preset.color());
+            ui.text(ui.truncate(preset.name(), tileW - 18), tx + 15, Ui.textY(y, h), on ? Theme.accentLight() : Theme.text());
+            ui.hit(tx, y, tileW, h, Ui.left(() -> Theme.setAccent(preset.color())));
         }
-        sy += presetsH + 6;
-
-        // Colours and Interface, side by side.
-        int colW = (w - 6) / 2;
-        int colH = 122;
-        int inner = colW - 16;
-        section(x, sy, colW, colH, "COLORS");
-        int iy = sy + 22;
-        iy = colorRow("Primary color", "hex-accent", x + 8, iy, inner, Theme.accentRgb(), Theme::setAccent);
-        iy = colorRow("Text color", "hex-text", x + 8, iy, inner, Theme.textRgb(), Theme::setText);
-        iy = ui.sliderRow("Menu tint", Theme.tint() + "%", x + 8, iy, inner, Theme.tint() / (double) Theme.MAX_TINT,
-                f -> Theme.setTint((int) Math.round(f * Theme.MAX_TINT)));
-        ui.sliderRow("Corner radius", Theme.radius() + "px", x + 8, iy, inner, Theme.radius() / (double) Theme.MAX_RADIUS,
-                f -> Theme.setRadius((int) Math.round(f * Theme.MAX_RADIUS)));
-
-        int cx = x + colW + 6;
-        section(cx, sy, colW, colH, "INTERFACE");
-        iy = sy + 22;
-        iy = ui.toggleRow("animations", "Animations", cx + 8, iy, inner, Theme.animations(),
-                () -> Theme.setAnimations(!Theme.animations()));
-        iy = ui.sliderRow("World dim", Theme.dim() + "%", cx + 8, iy, inner, Theme.dim() / (double) Theme.MAX_DIM,
-                f -> Theme.setDim((int) Math.round(f * Theme.MAX_DIM)));
-        ui.text("Menu size", cx + 8, iy, Theme.text());
-        ui.segmented(cx + 8, iy + 11, inner, 14, SCALE_OPTIONS, SCALE_OPTIONS.get(Theme.scale()),
-                option -> Theme.setScale(SCALE_OPTIONS.indexOf(option)));
-        iy += 31;
-        ui.bindRow("open-key", "Open menu", cx + 8, iy, inner, MenuKeys.keyName(), MenuKeys::setKey);
-        sy += colH + 6;
-
-        // Profiles, full width.
-        int profilesH = 44;
-        section(x, sy, w, profilesH, "PROFILES");
-        ui.segmented(x + 8, sy + 22, w - 16, 14, DaedalusConfig.PROFILES, DaedalusConfig.activeProfile(), this::loadProfile);
-        sy += profilesH;
-        ui.endScroll(settingsScroll, sy + 2);
-    }
-
-    private void section(int x, int y, int w, int h, String eyebrow) {
-        ui.box(x, y, w, h, Theme.panel(), Theme.line());
-        ui.text(eyebrow, x + 8, y + 8, Theme.accent());
-    }
-
-    private void presetTile(Theme.Preset preset, int x, int y, int w, int h) {
-        boolean on = Theme.accentRgb() == preset.color();
-        float hover = ui.hoverFade("preset:" + preset.name(), x, y, w, h);
-        int border = on ? Theme.accent() : Theme.mix(Theme.mix(Theme.accent(), Theme.line(), 0.55), Theme.line(), hover);
-        ui.box(x, y, w, h, Theme.card(), border);
-        // A small preview: the preset's colour over a dark background, with two bars.
-        int sx = x + 3;
-        int sy = y + 3;
-        int sw = w - 6;
-        ui.round(sx, sy, sw, 18, Theme.corner(18), Theme.mix(preset.color(), 0x141019, 0.18));
-        int barW = Math.round(sw * 0.55f);
-        ui.round(sx + 3, sy + 12, barW - 3, 3, 1, 0xFF000000 | preset.color());
-        ui.round(sx + barW + 2, sy + 12, Math.round(sw * 0.25f), 3, 1, Theme.mix(preset.color(), 0x141019, 0.45));
-        ui.text(ui.truncate(preset.name(), w - 6), x + 3, y + 25, Theme.text());
-        ui.hit(x, y, w, h, Ui.left(() -> Theme.setAccent(preset.color())));
+        return y + h;
     }
 
     /**
-     * Label, a colour swatch and a hex field. Clicking the field selects all of it, so you can type a new colour
-     * straight away; it applies as soon as 6 valid hex digits are in. Returns the y for the next row.
+     * A colour swatch and a hex field. Clicking the field selects all of it, so you can type a new colour straight
+     * away; it applies as soon as 6 valid hex digits are in.
      */
-    private int colorRow(String label, String id, int x, int y, int w, int rgb, Consumer<Integer> onColor) {
-        int fieldW = 54;
-        int fieldX = x + w - fieldW;
-        ui.text(ui.truncate(label, w - fieldW - 22), x, y + 3, Theme.text());
-        ui.textField(id, fieldX, y, fieldW, 14, Theme.hex(rgb), "#rrggbb", 7, Ui.HEX, text -> {
+    private void colorField(String id, int x, int y, int rgb, Consumer<Integer> onColor) {
+        ui.box(x, y, Ui.ROW_H, Ui.ROW_H, 0xFF000000 | rgb, Theme.line());
+        ui.textField(id, x + Ui.ROW_H + 4, y, 80 - Ui.ROW_H - 4, Ui.ROW_H, Theme.hex(rgb), "#rrggbb", 7, Ui.HEX, text -> {
             int parsed = Theme.parseHex(text);
             if (parsed >= 0) {
                 onColor.accept(parsed);
             }
         }, null, true);
-        ui.box(fieldX - 18, y, 14, 14, 0xFF000000 | rgb, Theme.line());
-        return y + 18;
-    }
-
-    // ---- Footer ----
-
-    private void drawFooter() {
-        int y = mainBottom() + 4;
-        int x = wx + 10;
-        String count = String.valueOf(ModuleRegistry.enabledCount(ModuleRegistry.all()));
-        ui.text(count, x, y, Theme.accent());
-        x += font.width(count);
-        ui.text(" modules enabled", x, y, Theme.muted());
-        x += font.width(" modules enabled") + 14;
-        String profile = "Profile: " + DaedalusConfig.activeProfile();
-        ui.text(profile, x, y, Theme.muted());
-        x += font.width(profile) + 14;
-        String hint = "Right click a module to toggle";
-        if (wx + ww - 10 - font.width(hint) > x) {
-            ui.textRight(hint, wx + ww - 10, y, Theme.muted());
-        }
     }
 
     private void setEnabled(Module module, boolean value) {
@@ -597,12 +585,14 @@ public final class DaedalusScreen extends Screen {
     }
 
     // =====================================================================================================
-    // Input. Mouse positions arrive in GUI pixels and are turned into menu pixels.
+    // Input. Mouse positions arrive in GUI pixels and are turned into menu pixels. Anything the menu does marks the
+    // config as changed; it is saved a moment later, so dragging a slider does not write the file every frame.
     // =====================================================================================================
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         ui.mouseClicked(event.x() / scale, event.y() / scale, event.button());
+        DaedalusConfig.markDirty();
         return true;
     }
 
@@ -614,6 +604,7 @@ public final class DaedalusScreen extends Screen {
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
         ui.mouseReleased();
+        DaedalusConfig.markDirty();
         return true;
     }
 
@@ -625,6 +616,7 @@ public final class DaedalusScreen extends Screen {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
+        DaedalusConfig.markDirty();
         if (ui.keyPressed(event)) {
             return true;
         }
@@ -638,12 +630,13 @@ public final class DaedalusScreen extends Screen {
 
     @Override
     public boolean charTyped(CharacterEvent event) {
+        DaedalusConfig.markDirty();
         if (ui.charTyped(event)) {
             return true;
         }
         // "/" jumps to the search box.
         if (event.codepoint() == '/') {
-            ui.focus("search", query, 32, Ui.ANY_TEXT, this::setQuery, null, false);
+            ui.focus("search", STATE.query(), 32, Ui.ANY_TEXT, this::setQuery, null, false);
             return true;
         }
         return false;

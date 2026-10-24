@@ -26,13 +26,12 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 
 /**
- * The Macros tab: a list of macros on the left, and the selected macro's settings and steps on the right.
+ * The Macros page: the selected macro's settings and steps. The list of macros is in the sidebar, under Macros.
  *
  * Every change goes through MacroManager, and every step is built by DefinitionValidator from the same text a
  * /macro step command would use, so the editor follows exactly the same rules and limits as the commands.
  */
 final class MacroEditor {
-    private static final int LIST_W = 136;
     private static final int ROW_GAP = 18;
     private static final IntPredicate NAME_CHARS = c -> Character.isLetterOrDigit(c) || c == '_' || c == '-';
 
@@ -41,7 +40,6 @@ final class MacroEditor {
 
     private final Ui ui;
     private final Runnable closeMenu;
-    private final Ui.Scroll listScroll = new Ui.Scroll();
     private final Ui.Scroll editScroll = new Ui.Scroll();
     private StepDraft draft;
     private boolean confirmDelete;
@@ -51,94 +49,66 @@ final class MacroEditor {
         this.closeMenu = closeMenu;
     }
 
-    void draw(int left, int top, int right, int bottom) {
+    /** The name of the macro shown in the editor, for the sidebar marker. */
+    static String selectedName() {
+        return selectedName;
+    }
+
+    /** The macro being edited: the one last picked, or the first one if that is gone. Null when there are none. */
+    Macro current() {
         List<Macro> macros = MacroManager.all();
         Macro selected = selectedName == null ? null : MacroManager.find(selectedName).orElse(null);
         if (selected == null && !macros.isEmpty()) {
             selected = macros.getFirst();
             select(selected);
         }
-        int split = left + LIST_W;
-        ui.g.fill(split + 1, top, right, bottom, Theme.panel());
-        ui.g.fill(split, top, split + 1, bottom, Theme.line());
-        drawList(left, top, split, bottom, macros, selected);
-        drawEditor(split + 1, top, right, bottom, selected);
+        return selected;
     }
 
-    // ---- Left: the macro list ----
+    void draw(int left, int top, int right, int bottom) {
+        Macro macro = current();
+        int x = left + Theme.CONTENT_PAD_X;
+        int w = right - left - 2 * Theme.CONTENT_PAD_X;
+        int y = ui.beginScroll(left, top, right, bottom, editScroll) + Theme.CONTENT_PAD_Y;
 
-    private void drawList(int left, int top, int right, int bottom, List<Macro> macros, Macro selected) {
-        int x = left + 8;
-        int w = right - left - 16;
-        int y = top + 7;
-        ui.text("MACROS", x, y, Theme.accent());
-        ui.chipRight(x + w, y - 2, "+ New", this::newMacro);
-        ui.heading("Macros", x, y + 11, Theme.text());
-        ui.text(macros.size() + " of " + MacroManager.allowlist().maxMacros(), x, y + 27, Theme.muted());
-
-        int listTop = y + 40;
-        int cy = ui.beginScroll(left, listTop, right, bottom - 4, listScroll);
-        if (macros.isEmpty()) {
-            cy = ui.wrapped("No macros yet. Click + New to make one.", x, cy + 4, w, Theme.muted());
-        }
-        for (Macro macro : macros) {
-            macroCard(macro, x, cy, w, macro == selected);
-            cy += 27;
-        }
-        ui.endScroll(listScroll, cy);
-    }
-
-    private void macroCard(Macro macro, int x, int y, int w, boolean isSelected) {
-        int h = 24;
-        float hover = ui.hoverFade("macro:" + macro.name(), x, y, w, h);
-        int border = isSelected ? Theme.accent()
-                : Theme.mix(Theme.mix(Theme.accent(), Theme.line(), 0.55), Theme.line(), hover);
-        ui.box(x, y, w, h, isSelected ? Theme.cardSelected() : Theme.card(), border);
-        ui.hit(x, y, w, h, Ui.left(() -> select(macro)));
-
-        int textRight = x + w - 6;
-        if (macro.keySlot() != 0 && !KeyNames.isNone(MacroKeys.keyName(macro.keySlot()))) {
-            String key = KeyNames.display(MacroKeys.keyName(macro.keySlot()));
-            int keyW = Math.min(w / 2, ui.font.width(key) + 8);
-            textRight -= keyW;
-            ui.box(textRight, y + 6, keyW, 12, Theme.card(), Theme.line());
-            ui.text(ui.truncate(key, keyW - 6), textRight + 4, y + 8, Theme.muted());
-            textRight -= 4;
-        }
-        int nameColor = macro.paused() ? Theme.mix(Theme.text(), Theme.card(), 0.6) : Theme.text();
-        ui.text(ui.truncate(macro.name(), textRight - x - 7), x + 7, y + 4, nameColor);
-        String info = macro.steps().size() + (macro.steps().size() == 1 ? " step" : " steps") + " · "
-                + (macro.paused() ? "paused" : intervalLabel(macro).toLowerCase(Locale.ROOT));
-        ui.text(ui.truncate(info, textRight - x - 7), x + 7, y + 14, Theme.muted());
-    }
-
-    // ---- Right: the selected macro ----
-
-    private void drawEditor(int left, int top, int right, int bottom, Macro macro) {
-        int x = left + 10;
-        int w = right - left - 20;
-        if (macro == null) {
-            ui.wrapped("Make a macro with + New. A macro is a list of steps, like walking somewhere, mining or "
-                    + "harvesting crops, that runs in order.", x, top + 30, w, Theme.muted());
-            return;
+        // Breadcrumb, then the title row with the page's buttons on the right.
+        ui.breadcrumb("Macros", macro == null ? null : macro.name(), x, y);
+        y += 14;
+        int bx = x + w;
+        int by = y + 3;
+        bx -= ui.chipRight(bx, by, "+ New", this::newMacro) + 4;
+        if (macro != null) {
+            if (confirmDelete) {
+                bx -= ui.solidChip(bx, by, "Really delete?", Theme.danger(), () -> delete(macro)) + 4;
+            } else {
+                bx -= ui.chipRight(bx, by, "Delete", () -> confirmDelete = true) + 4;
+            }
+            bx -= ui.solidChip(bx, by, "Run", Theme.accent(), () -> run(macro)) + 4;
         }
         Allowlist rules = MacroManager.allowlist();
-        int y = ui.beginScroll(left, top, right, bottom, editScroll) + 9;
+        String title = macro == null ? "Macros" : macro.name();
+        String description = macro == null
+                ? MacroManager.all().size() + " of " + rules.maxMacros() + " macros"
+                : macro.steps().size() + (macro.steps().size() == 1 ? " step" : " steps") + ", "
+                        + (macro.paused() ? "paused" : "repeats " + intervalLabel(macro).toLowerCase(Locale.ROOT));
+        ui.heading(ui.truncateHeading(title, bx - x - 6), x, y, Theme.text());
+        y += 17;
+        ui.text(ui.truncate(description, bx - x - 6), x, y, Theme.secondary());
+        y += 14;
 
-        // Header: label plus Run and Delete.
-        ui.text("MACRO", x, y, Theme.accent());
-        int bx = x + w;
-        bx -= ui.solidChip(bx, y - 3, "Run", Theme.accent(), () -> run(macro)) + 4;
-        if (confirmDelete) {
-            ui.solidChip(bx, y - 3, "Really delete?", Theme.danger(), () -> delete(macro));
-        } else {
-            ui.chipRight(bx, y - 3, "Delete", () -> confirmDelete = true);
+        if (macro == null) {
+            y = ui.wrapped("Make a macro with + New. A macro is a list of steps, like walking somewhere, mining or "
+                    + "harvesting crops, that runs in order.", x, y + 6, w, Theme.secondary());
+            ui.endScroll(editScroll, y + 10);
+            return;
         }
-        y += 16;
 
-        ui.textField("macro-name:" + macro.name(), x, y, w, 16, macro.name(), "Name", Limits.MAX_NAME_LENGTH,
-                NAME_CHARS, text -> {}, text -> rename(macro, text), false);
-        y += 23;
+        y = ui.section("General", x, y, w);
+        ui.text("Name", x, y + 3, Theme.text());
+        int nameW = Math.round(w * Theme.CONTROL_COLUMN);
+        ui.textField("macro-name:" + macro.name(), x + w - nameW, y, nameW, Ui.ROW_H, macro.name(), "Name",
+                Limits.MAX_NAME_LENGTH, NAME_CHARS, text -> {}, text -> rename(macro, text), false);
+        y += 20;
 
         y = ui.toggleRow("macro-on:" + macro.name(), "Enabled", x, y, w, !macro.paused(),
                 () -> MacroManager.update(macro.name(), m -> m.withPaused(!m.paused())));
@@ -151,18 +121,14 @@ final class MacroEditor {
 
         String key = macro.keySlot() == 0 ? KeyNames.NONE : MacroKeys.keyName(macro.keySlot());
         y = ui.bindRow("macro-key:" + macro.name(), "Run key", x, y, w, key, name -> setKey(macro, name));
-        y += 2;
-        ui.line(x, y, x + w);
-        y += 8;
 
         // Steps.
-        ui.text("STEPS", x, y + 3, Theme.accent());
-        ui.text(macro.steps().size() + "/" + rules.maxSteps(), x + ui.font.width("STEPS") + 6, y + 3, Theme.muted());
-        ui.chipRight(x + w, y, "+ Add step", () -> draft = new StepDraft(-1));
-        y += 19;
+        y = ui.section("Steps  " + macro.steps().size() + "/" + rules.maxSteps(), x, y, w);
         if (macro.steps().isEmpty() && draft == null) {
-            y = ui.wrapped("No steps yet. Click + Add step.", x, y + 2, w, Theme.muted()) + 4;
+            ui.text("No steps yet.", x, y + 3, Theme.secondary());
         }
+        ui.chipRight(x + w, y, "+ Add step", () -> draft = new StepDraft(-1));
+        y += 20;
         for (int i = 0; i < macro.steps().size(); i++) {
             stepRow(macro, i, x, y, w);
             y += 20;
@@ -184,7 +150,7 @@ final class MacroEditor {
         String number = String.valueOf(index + 1);
         ui.text(number, x + 6, Ui.textY(y, h), Theme.accent());
         int buttons = 3 * 14 + 2 * 2;
-        int textX = x + 8 + Math.max(ui.font.width("00"), ui.font.width(number)) + 4;
+        int textX = x + 8 + Math.max(ui.width("00"), ui.width(number)) + 4;
         ui.text(ui.truncate(macro.steps().get(index).describe(), x + w - buttons - 8 - textX), textX, Ui.textY(y, h),
                 Theme.text());
 
@@ -247,7 +213,7 @@ final class MacroEditor {
             }
             case GOTO -> {
                 y = label("Walk to block X Y Z", x, y);
-                int hereW = ui.font.width("Here") + 14;
+                int hereW = ui.width("Here") + 14;
                 int fieldW = (w - hereW - 4 - 8) / 3;
                 ui.textField("draft-x", x, y, fieldW, 14, d.x, "X", 9, Ui.WHOLE_NUMBER, text -> d.x = text);
                 ui.textField("draft-y", x + fieldW + 4, y, fieldW, 14, d.y, "Y", 9, Ui.WHOLE_NUMBER, text -> d.y = text);
@@ -281,7 +247,7 @@ final class MacroEditor {
     private int ticksRow(StepDraft d, int x, int y, int w, int max) {
         ui.text("Ticks", x, y + 3, Theme.text());
         String seconds = secondsHint(d.ticks);
-        ui.text(seconds, x + ui.font.width("Ticks") + 6, y + 3, Theme.muted());
+        ui.text(seconds, x + ui.width("Ticks") + 6, y + 3, Theme.muted());
         ui.textField("draft-ticks", x + w - 56, y, 56, 14, d.ticks, "1-" + max, 5, Ui.WHOLE_NUMBER, text -> d.ticks = text);
         return y + ROW_GAP + 2;
     }
@@ -305,7 +271,7 @@ final class MacroEditor {
 
     // ---- Actions ----
 
-    private void select(Macro macro) {
+    void select(Macro macro) {
         if (!macro.name().equals(selectedName)) {
             selectedName = macro.name();
             draft = null;
@@ -314,7 +280,7 @@ final class MacroEditor {
         }
     }
 
-    private void newMacro() {
+    void newMacro() {
         List<Macro> all = MacroManager.all();
         int n = 1;
         while (MacroManager.find("macro" + n).isPresent()) {

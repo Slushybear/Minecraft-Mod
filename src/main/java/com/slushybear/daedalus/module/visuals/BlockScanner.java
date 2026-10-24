@@ -1,7 +1,9 @@
 package com.slushybear.daedalus.module.visuals;
 
+import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
+import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -89,6 +91,24 @@ final class BlockScanner {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Drops found blocks that are no longer a target, such as an ore you just mined, without waiting for the next pass.
+     * Only blocks in loaded chunks are checked, so walking away does not wipe the results. Returns true if any were dropped.
+     */
+    boolean prune(ClientLevel level) {
+        boolean removed = false;
+        ObjectIterator<Long2IntMap.Entry> iterator = results.long2IntEntrySet().fastIterator();
+        while (iterator.hasNext()) {
+            BlockPos pos = BlockPos.of(iterator.next().getLongKey());
+            boolean loaded = level.getChunkSource().hasChunk(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
+            if (loaded && !targets.containsKey(level.getBlockState(pos).getBlock())) {
+                iterator.remove();
+                removed = true;
+            }
+        }
+        return removed;
     }
 
     private void startPass(ClientLevel level, BlockPos player, int newRange) {

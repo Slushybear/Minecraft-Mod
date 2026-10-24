@@ -148,6 +148,43 @@ final class Icons {
 
     private Icons() {}
 
+    static final String[] RESET = {
+            "..#....",
+            ".##....",
+            "######.",
+            ".##...#",
+            "..#...#",
+            "......#",
+            "..####.",
+    };
+    static final String[] KEYBOARD = {
+            ".......",
+            "#######",
+            "#.#.#.#",
+            "#######",
+            "#.###.#",
+            "#######",
+            ".......",
+    };
+    static final String[] PALETTE = {
+            "..###..",
+            ".#...#.",
+            "#.#.#.#",
+            "#.....#",
+            "#.#..#.",
+            ".#..#..",
+            "..##...",
+    };
+    static final String[] CHEVRON = {
+            ".......",
+            ".......",
+            "#.....#",
+            ".#...#.",
+            "..#.#..",
+            "...#...",
+            ".......",
+    };
+
     static String[] of(Category category) {
         return switch (category) {
             case COMBAT -> SWORD;

@@ -11,8 +11,8 @@ import com.slushybear.daedalus.module.visuals.Freecam;
 import com.slushybear.daedalus.module.visuals.Freelook;
 import com.slushybear.daedalus.module.visuals.Fullbright;
 import com.slushybear.daedalus.module.visuals.MobEsp;
+import com.slushybear.daedalus.config.DaedalusConfig;
 import java.util.List;
-import java.util.Locale;
 import net.minecraft.client.Minecraft;
 
 public final class ModuleRegistry {
@@ -59,6 +59,7 @@ public final class ModuleRegistry {
             boolean down = playing && KeyNames.isDown(client, module.keybind());
             if (down && !module.keybindWasDown) {
                 module.toggle();
+                DaedalusConfig.markDirty();
             }
             module.keybindWasDown = down;
 
@@ -78,10 +79,7 @@ public final class ModuleRegistry {
 
     /** Modules whose name or description contains the query, ignoring case. */
     public static List<Module> search(String query) {
-        String q = query.trim().toLowerCase(Locale.ROOT);
-        return MODULES.stream()
-                .filter(m -> (m.name() + " " + m.description()).toLowerCase(Locale.ROOT).contains(q))
-                .toList();
+        return MODULES.stream().filter(m -> m.matches(query)).toList();
     }
 
     public static long enabledCount(List<Module> modules) {

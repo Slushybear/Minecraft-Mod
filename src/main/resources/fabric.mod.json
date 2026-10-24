@@ -5,6 +5,7 @@
   "name": "Daedalus",
   "description": "Client-side quality of life, visuals and farming automation.",
   "authors": ["Slushybear"],
+  "icon": "assets/daedalus/icon.png",
   "environment": "client",
   "entrypoints": {
     "client": ["com.slushybear.daedalus.DaedalusClient"]

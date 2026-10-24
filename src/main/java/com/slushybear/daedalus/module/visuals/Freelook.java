@@ -14,8 +14,8 @@ import net.minecraft.util.Mth;
  * {@link com.slushybear.daedalus.mixin.EntityMixin}.
  */
 public final class Freelook extends Module {
-    private final BoolSetting invert = addSetting(new BoolSetting("Invert", false));
-    private final SliderSetting sensitivity = addSetting(new SliderSetting("Sensitivity", 100, 25, 200, 5));
+    private final BoolSetting invert = addSetting("Mouse", "Flip up and down", new BoolSetting("Invert", false));
+    private final SliderSetting sensitivity = addSetting("Mouse", "How fast the camera turns", new SliderSetting("Sensitivity", 100, 25, 200, 5).unit("%"));
     private boolean started;
     private float yaw;
     private float pitch;

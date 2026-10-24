@@ -23,24 +23,36 @@ import java.util.Map;
 import net.fabricmc.loader.api.FabricLoader;
 
 /**
- * Saves the menu to config/daedalus.json. The theme is shared; each profile keeps its own module states
- * (enabled, keybind, settings). The open-menu key is saved by Minecraft in options.txt, not here.
- *
- * File layout:
+ * Saves the menu to the config/daedalus folder:
  * <pre>
- * { "theme": {...}, "profile": "Default",
- *   "profiles": { "Default": { "Freelook": { "enabled": true, "keybind": "key.keyboard.f", "settings": { "Invert": false } } } } }
+ * client.json      the theme and which profile is active, shared by every profile
+ * Default.json     one file per profile: each module's enabled state, keybind and settings
+ * Dungeons.json
+ * Legit.json
  * </pre>
+ * A profile file looks like
+ * <pre>
+ * { "Freelook": { "enabled": true, "keybind": "key.keyboard.f", "settings": { "Invert": false } } }
+ * </pre>
+ * Changes are saved about a second after they happen (see {@link #markDirty}), and again when the menu closes and
+ * when the game quits. The open-menu key is saved by Minecraft in options.txt, not here.
  */
 public final class DaedalusConfig {
     public static final List<String> PROFILES = List.of("Default", "Dungeons", "Legit");
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("daedalus.json");
+    private static final Path DIR = FabricLoader.getInstance().getConfigDir().resolve("daedalus");
+    private static final Path CLIENT_FILE = DIR.resolve("client.json");
+    /** Where everything was saved before profiles got their own files. Read once, then renamed. */
+    private static final Path OLD_FILE = FabricLoader.getInstance().getConfigDir().resolve("daedalus.json");
+    /** How long to wait after the last change before saving. */
+    private static final int SAVE_DELAY_TICKS = 20;
 
     /** Module states for profiles that are not active right now. The active one lives in the modules themselves. */
     private static final Map<String, JsonObject> SAVED_PROFILES = new HashMap<>();
     private static String activeProfile = PROFILES.getFirst();
+    /** Ticks until a pending save, or -1 when nothing changed. */
+    private static int saveIn = -1;
 
     private DaedalusConfig() {}
 
@@ -48,62 +60,54 @@ public final class DaedalusConfig {
         return activeProfile;
     }
 
-    public static String nextProfile() {
-        return PROFILES.get((PROFILES.indexOf(activeProfile) + 1) % PROFILES.size());
-    }
-
     public static void load() {
-        if (Files.exists(FILE)) {
-            try (Reader reader = Files.newBufferedReader(FILE, StandardCharsets.UTF_8)) {
-                JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
-                if (root.has("theme")) {
-                    Theme.fromJson(root.getAsJsonObject("theme"));
+        if (Files.exists(OLD_FILE) && !Files.exists(CLIENT_FILE)) {
+            migrateOldFile();
+        } else {
+            JsonObject client = read(CLIENT_FILE);
+            if (client != null) {
+                if (client.has("theme") && client.get("theme").isJsonObject()) {
+                    Theme.fromJson(client.getAsJsonObject("theme"));
                 }
-                if (root.has("profiles")) {
-                    for (Map.Entry<String, JsonElement> entry : root.getAsJsonObject("profiles").entrySet()) {
-                        if (PROFILES.contains(entry.getKey()) && entry.getValue().isJsonObject()) {
-                            SAVED_PROFILES.put(entry.getKey(), entry.getValue().getAsJsonObject());
-                        }
-                    }
+                if (client.has("profile") && PROFILES.contains(client.get("profile").getAsString())) {
+                    activeProfile = client.get("profile").getAsString();
                 }
-                if (root.has("profile") && PROFILES.contains(root.get("profile").getAsString())) {
-                    activeProfile = root.get("profile").getAsString();
+            }
+            for (String name : PROFILES) {
+                JsonObject profile = read(profileFile(name));
+                if (profile != null) {
+                    SAVED_PROFILES.put(name, profile);
                 }
-            } catch (IOException | RuntimeException e) {
-                // Gson throws unchecked exceptions for broken JSON or wrong types, hence RuntimeException.
-                DaedalusClient.LOGGER.error("Could not read {}, moving it aside and using defaults", FILE, e);
-                moveAside();
-                Theme.reset();
-                SAVED_PROFILES.clear();
             }
         }
         applyProfile(SAVED_PROFILES.get(activeProfile));
     }
 
-    public static void save() {
-        SAVED_PROFILES.put(activeProfile, captureModules());
+    /** Something changed. It will be saved shortly, so a burst of changes is written once. */
+    public static void markDirty() {
+        saveIn = SAVE_DELAY_TICKS;
+    }
 
-        JsonObject profiles = new JsonObject();
+    /** Called every client tick. Saves once the delay after the last change has passed. */
+    public static void tick() {
+        if (saveIn > 0) {
+            saveIn--;
+        } else if (saveIn == 0) {
+            save();
+        }
+    }
+
+    public static void save() {
+        saveIn = -1;
+        SAVED_PROFILES.put(activeProfile, captureModules());
+        JsonObject client = new JsonObject();
+        client.add("theme", Theme.toJson());
+        client.addProperty("profile", activeProfile);
+        write(CLIENT_FILE, client);
         for (String name : PROFILES) {
             if (SAVED_PROFILES.containsKey(name)) {
-                profiles.add(name, SAVED_PROFILES.get(name));
+                write(profileFile(name), SAVED_PROFILES.get(name));
             }
-        }
-        JsonObject root = new JsonObject();
-        root.add("theme", Theme.toJson());
-        root.addProperty("profile", activeProfile);
-        root.add("profiles", profiles);
-
-        // Write to a temp file first, then swap it in, so a crash mid-write cannot leave a half-written config.
-        try {
-            Files.createDirectories(FILE.getParent());
-            Path temp = FILE.resolveSibling(FILE.getFileName() + ".tmp");
-            try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
-                GSON.toJson(root, writer);
-            }
-            Files.move(temp, FILE, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException e) {
-            DaedalusClient.LOGGER.error("Could not save {}", FILE, e);
         }
     }
 
@@ -116,6 +120,70 @@ public final class DaedalusConfig {
         activeProfile = name;
         applyProfile(SAVED_PROFILES.get(name));
         save();
+    }
+
+    private static Path profileFile(String name) {
+        return DIR.resolve(name + ".json");
+    }
+
+    /** Reads the old single config/daedalus.json, then renames it so it is not read again. */
+    private static void migrateOldFile() {
+        JsonObject root = read(OLD_FILE);
+        if (root != null) {
+            if (root.has("theme") && root.get("theme").isJsonObject()) {
+                Theme.fromJson(root.getAsJsonObject("theme"));
+            }
+            if (root.has("profiles") && root.get("profiles").isJsonObject()) {
+                for (Map.Entry<String, JsonElement> entry : root.getAsJsonObject("profiles").entrySet()) {
+                    if (PROFILES.contains(entry.getKey()) && entry.getValue().isJsonObject()) {
+                        SAVED_PROFILES.put(entry.getKey(), entry.getValue().getAsJsonObject());
+                    }
+                }
+            }
+            if (root.has("profile") && PROFILES.contains(root.get("profile").getAsString())) {
+                activeProfile = root.get("profile").getAsString();
+            }
+        }
+        try {
+            Files.move(OLD_FILE, OLD_FILE.resolveSibling("daedalus.json.old"), StandardCopyOption.REPLACE_EXISTING);
+            DaedalusClient.LOGGER.info("Moved settings from {} into {}", OLD_FILE, DIR);
+        } catch (IOException e) {
+            DaedalusClient.LOGGER.error("Could not rename {}", OLD_FILE, e);
+        }
+        markDirty();
+    }
+
+    /** Reads a JSON object from a file. Returns null if the file is missing; a broken file is moved aside. */
+    private static JsonObject read(Path file) {
+        if (!Files.exists(file)) {
+            return null;
+        }
+        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            return JsonParser.parseReader(reader).getAsJsonObject();
+        } catch (IOException | RuntimeException e) {
+            // Gson throws unchecked exceptions for broken JSON or wrong types, hence RuntimeException.
+            DaedalusClient.LOGGER.error("Could not read {}, moving it aside and using defaults", file, e);
+            try {
+                Files.move(file, file.resolveSibling(file.getFileName() + ".bad"), StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException moveError) {
+                DaedalusClient.LOGGER.error("Could not move {} aside", file, moveError);
+            }
+            return null;
+        }
+    }
+
+    /** Writes to a temp file first, then swaps it in, so a crash mid-write cannot leave a half-written file. */
+    private static void write(Path file, JsonObject json) {
+        try {
+            Files.createDirectories(file.getParent());
+            Path temp = file.resolveSibling(file.getFileName() + ".tmp");
+            try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
+                GSON.toJson(json, writer);
+            }
+            Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            DaedalusClient.LOGGER.error("Could not save {}", file, e);
+        }
     }
 
     private static JsonObject captureModules() {
@@ -164,14 +232,6 @@ public final class DaedalusConfig {
                     DaedalusClient.LOGGER.warn("Ignoring bad saved value for {} > {}", module.name(), setting.name());
                 }
             }
-        }
-    }
-
-    private static void moveAside() {
-        try {
-            Files.move(FILE, FILE.resolveSibling(FILE.getFileName() + ".bad"), StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            DaedalusClient.LOGGER.error("Could not move {} aside", FILE, e);
         }
     }
 }

@@ -1,0 +1,34 @@
+[
+  {
+    "name": "harvest-wheat",
+    "steps": [
+      { "type": "HARVEST_CROPS", "target": "WHEAT", "amount": 4 }
+    ]
+  },
+  {
+    "name": "replant-wheat",
+    "steps": [
+      { "type": "REPLANT_CROPS", "target": "WHEAT", "amount": 4 }
+    ]
+  },
+  {
+    "name": "farm-wheat",
+    "steps": [
+      { "type": "HARVEST_CROPS", "target": "WHEAT", "amount": 4 },
+      { "type": "WAIT", "target": "", "amount": 20 },
+      { "type": "REPLANT_CROPS", "target": "WHEAT", "amount": 4 }
+    ]
+  },
+  {
+    "name": "mine-coal",
+    "steps": [
+      { "type": "MINE", "target": "COAL", "amount": 4 }
+    ]
+  },
+  {
+    "name": "mine-iron",
+    "steps": [
+      { "type": "MINE", "target": "IRON", "amount": 4 }
+    ]
+  }
+]

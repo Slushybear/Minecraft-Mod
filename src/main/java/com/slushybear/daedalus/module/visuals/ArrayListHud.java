@@ -19,8 +19,8 @@ import net.minecraft.resources.Identifier;
 public final class ArrayListHud extends Module {
     private static final int LINE_H = 11;
 
-    private final ChoiceSetting side = addSetting(new ChoiceSetting("Side", "Right", "Right", "Left"));
-    private final BoolSetting background = addSetting(new BoolSetting("Background", true));
+    private final ChoiceSetting side = addSetting("Layout", "Screen edge the list hugs", new ChoiceSetting("Side", "Right", "Right", "Left"));
+    private final BoolSetting background = addSetting("Layout", "Dark strip behind each name", new BoolSetting("Background", true));
 
     public ArrayListHud() {
         super("ArrayList", "Lists enabled modules on screen", Category.VISUALS, false);

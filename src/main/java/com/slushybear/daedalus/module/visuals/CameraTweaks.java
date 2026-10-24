@@ -12,9 +12,9 @@ import com.slushybear.daedalus.module.setting.SliderSetting;
 public final class CameraTweaks extends Module {
     private static final float VANILLA_DISTANCE = 4;
 
-    private final BoolSetting noHurtShake = addSetting(new BoolSetting("No hurt shake", true));
-    private final BoolSetting clip = addSetting(new BoolSetting("Clip through walls", true));
-    private final SliderSetting distance = addSetting(new SliderSetting("Third person distance", 4, 1, 16, 0.5));
+    private final BoolSetting noHurtShake = addSetting("Camera", "Stop the screen tilting when you take damage", new BoolSetting("No hurt shake", true));
+    private final BoolSetting clip = addSetting("Third person", "Let the camera pass through blocks", new BoolSetting("Clip through walls", true));
+    private final SliderSetting distance = addSetting("Third person", "How far back the camera sits", new SliderSetting("Distance", 4, 1, 16, 0.5).unit(" blocks"));
 
     public CameraTweaks() {
         super("Camera", "No hurt shake, wall clipping, zoom", Category.VISUALS, false);

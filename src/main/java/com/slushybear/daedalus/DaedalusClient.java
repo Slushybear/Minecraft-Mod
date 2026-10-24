@@ -36,6 +36,7 @@ public final class DaedalusClient implements ClientModInitializer {
             ModuleRegistry.tick(client);
             DamageObserver.tick(client);
             MacroManager.tick(client);
+            DaedalusConfig.tick();
         });
         // Module keybinds can change module states in game, so save once more on the way out.
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> DaedalusConfig.save());

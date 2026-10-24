@@ -26,13 +26,13 @@ import net.minecraft.world.inventory.Slot;
  * backgrounds also hold the player model and recipe book.
  */
 public final class CustomInventory extends Module {
-    private final SliderSetting padding = addSetting(new SliderSetting("Panel padding", 0, 0, 16, 1));
-    private final BoolSetting border = addSetting(new BoolSetting("Border", true));
-    private final BoolSetting shadow = addSetting(new BoolSetting("Shadow", true));
-    private final ChoiceSetting colours = addSetting(new ChoiceSetting("Colours", "Client", "Client", "Vanilla", "Dark"));
-    private final SliderSetting dim = addSetting(new SliderSetting("Dim", 55, 0, 100, 1));
-    private final BoolSetting blur = addSetting(new BoolSetting("Blur world", false));
-    private final ChoiceSetting slots = addSetting(new ChoiceSetting("Slots", "Wells", "Wells", "Flat", "Outlined"));
+    private final SliderSetting padding = addSetting("Panel", "Extra space around the slots", new SliderSetting("Panel padding", 0, 0, 16, 1).unit("px"));
+    private final BoolSetting border = addSetting("Panel", "Thin outline around the panel", new BoolSetting("Border", true));
+    private final BoolSetting shadow = addSetting("Panel", "Soft shadow under the panel", new BoolSetting("Shadow", true));
+    private final ChoiceSetting colours = addSetting("Panel", "Colour scheme for the panel", new ChoiceSetting("Colours", "Client", "Client", "Vanilla", "Dark"));
+    private final SliderSetting dim = addSetting("Background", "How dark the world gets behind it", new SliderSetting("Dim", 55, 0, 100, 1).unit("%"));
+    private final BoolSetting blur = addSetting("Background", "Blur the world behind the panel", new BoolSetting("Blur world", false));
+    private final ChoiceSetting slots = addSetting("Slots", "How each item slot is drawn", new ChoiceSetting("Slots", "Wells", "Wells", "Flat", "Outlined"));
 
     /** Colours for one palette. */
     private record Palette(int panel, int border, int slot, int slotDark, int slotLight, int label) {}

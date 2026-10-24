@@ -20,6 +20,16 @@ public final class WorldGizmos {
 
     private WorldGizmos() {}
 
+    /** True while any module is drawing gizmos, so the renderer can keep them clear of the fog. */
+    public static boolean active() {
+        for (Module module : ModuleRegistry.all()) {
+            if (module.enabled() && module instanceof Drawer) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static void init() {
         LevelExtractionEvents.END_EXTRACTION.register(WorldGizmos::frame);
     }

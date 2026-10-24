@@ -28,9 +28,9 @@ public final class MobEsp extends Module implements WorldGizmos.Drawer {
     private static final int HOSTILE = 0xFFef4444;
     private static final int PASSIVE = 0xFF34d399;
 
-    private final ChoiceSetting mode = addSetting(new ChoiceSetting("Mode", "Outline", "Outline", "Box", "Glow"));
-    private final BoolSetting players = addSetting(new BoolSetting("Players", true));
-    private final BoolSetting mobs = addSetting(new BoolSetting("Mobs", true));
+    private final ChoiceSetting mode = addSetting("Drawing", "Outline, box, or vanilla glow", new ChoiceSetting("Mode", "Outline", "Outline", "Box", "Glow"));
+    private final BoolSetting players = addSetting("Targets", "Highlight other players", new BoolSetting("Players", true));
+    private final BoolSetting mobs = addSetting("Targets", "Highlight mobs and animals", new BoolSetting("Mobs", true));
 
     public MobEsp() {
         super("Mob ESP", "Highlights mobs and players", Category.VISUALS, false);

@@ -24,7 +24,7 @@ public final class TargetHud extends Module {
     private static final int W = 128;
     private static final int H = 36;
 
-    private final ChoiceSetting position = addSetting(new ChoiceSetting("Position", "Center", "Top", "Center", "Bottom"));
+    private final ChoiceSetting position = addSetting("Layout", "Where the panel sits on screen", new ChoiceSetting("Position", "Center", "Top", "Center", "Bottom"));
     /** Smoothed health bar fill, so the bar slides down instead of jumping. */
     private float shownFraction = -1;
     private int shownId = -1;

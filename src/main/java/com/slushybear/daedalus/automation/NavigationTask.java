@@ -1,6 +1,7 @@
 package com.slushybear.daedalus.automation;
 
 import com.slushybear.daedalus.DaedalusClient;
+import com.slushybear.daedalus.motion.LookControl;
 import com.slushybear.daedalus.pathfinding.Cell;
 import com.slushybear.daedalus.pathfinding.Goal;
 import com.slushybear.daedalus.pathfinding.GridSnapshot;
@@ -49,6 +50,7 @@ public final class NavigationTask implements Task {
     private final PathSettings settings = PathSettings.defaults();
     private final InputControl control = new InputControl();
     private final Set<Cell> excluded = new HashSet<>();
+    private final LookControl look = new LookControl();
 
     private int generation;
     private int failuresInARow;
@@ -152,7 +154,7 @@ public final class NavigationTask implements Task {
         }
 
         Navigator.Plan route = plan.route().get();
-        walk = new PathWalker(route.path(), settings);
+        walk = new PathWalker(route.path(), settings, look, route.reachesGoal());
         walkReachesGoal = route.reachesGoal();
         DaedalusClient.LOGGER.info("Navigation to {}: {} {} waypoints, {} ticks: {}", targetText,
                 route.reachesGoal() ? "route of" : "segment of", route.path().size(), Math.round(route.path().cost()),

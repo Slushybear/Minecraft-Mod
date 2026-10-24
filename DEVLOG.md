@@ -7,7 +7,7 @@ Client-side Fabric mod for Minecraft 26.2. Players build their own macros from a
 | Area | Status |
 |---|---|
 | Build against MC 26.2 | Works. `./gradlew build` produces `build/libs/daedalus-client-0.1.0.jar` |
-| Pathfinding unit tests | 112 passing (`PathSearchTest`, `GoalAndCostTest`, `MovementTest`, `PathTrackerTest`, `JumpPlannerTest`, `StartCellAndNavigatorTest`, `GridSnapshotTest`) |
+| Pathfinding and motion unit tests | 127 passing (`PathSearchTest`, `GoalAndCostTest`, `MovementTest`, `PathTrackerTest`, `JumpPlannerTest`, `StartCellAndNavigatorTest`, `GridSnapshotTest`) |
 | Pathfinder, Baritone-style rewrite (2026-10-22) | Search, moves, tracker, jump planner, segments and walker written and unit tested where pure. Walker **not yet run in game** |
 | Damage observer | Written, compiles, **not yet run in game** |
 | Macros, commands, key slots | Written, compiles, **not yet run in game** |
@@ -78,6 +78,19 @@ Beyond Baritone (2026-10-22), all behind long jumps and backed by the `JumpPlann
 | Level 5-block gap | Not possible without potions or ice, not offered |
 | Neo (`NEO`) | A level landing across a gap of 1 to 3 with something standing in the straight line: the body curves out and back in. Only where one side of the obstacle is open air over a gap (with a floor beside it, walking round wins), and never around lava or fire. Sprint only. +10 tick penalty |
 | Side jump (`SIDE_JUMP`) | A landing 2 to 4 ahead and one to the side, level, one lower, or one higher for 2 or 3 ahead. Only when none of the three cells next to the takeoff in that direction can be walked to |
+
+Smooth, human-paced movement (2026-10-23). Ground moves (walk, diagonal, step up, drop) give the eyes, feet and route separate jobs. No randomness anywhere: it is all easing and look-ahead.
+
+| Part | Behaviour |
+|---|---|
+| `LookControl` | Eases the view toward a target. Wanted turn speed is 20% of the remaining angle, capped at 16 degrees per tick, and the real speed moves toward it by at most 3.2 per tick to speed up and 5 to slow down: a gentle start, fastest in the middle, soft landing, no overshoot. Always turns the short way. The state is shared across a task's segments so a new segment carries on turning |
+| Eyes | Look at the farthest of the next 3 cells within 4.5 blocks of walking, so the view turns into a corner before the body reaches it. Held within 45 degrees of the feet's heading. Within 2 blocks of a jump's takeoff the view is already along the jump. Pitch aims at chest height of what is ahead, so a drop looks down at it |
+| Feet | Head for the next cell, cut up to 0.35 blocks toward the one after it at an open corner (the inside corner cell must be air at feet and head, so no clipping). Move by analog stick values, so the body can go at an angle to the view |
+| `Gait` | Within 30 degrees of the view: full speed (sprint within 20). 30 to 100 degrees: slows down to 35%. 100 or more: stands until the view comes round |
+| Speed | Eases off over the last 3 blocks of a walk that ends at the goal (not at the end of a segment), to 80% for a drop, to 70% near a sharp turn (over 60 degrees). Changes by at most 6% a tick |
+| Unchanged | Jumps, neos, swimming and ladders still set an exact heading. Mining still snaps to the block |
+
+Jumps are not slowed down on approach: the run-up speed is what the jump model assumes, and the view is lined up early instead.
 
 Neos and side jumps are planned and steered by `JumpSim`, a 2D simulation of vanilla movement with the body's 0.6 x 1.8 box against the world. It steers the way the walker does (face the next plan point not yet passed) and presses jump at the last tick that lands at 90/100/110% speed. The search runs it from a standstill to decide if a jump is possible; the walker runs it every tick from the real position and speed. The three neo steering lines in `JumpSim.NEO_LINES` came from sweeping the simulation over walls 1 and 2 long at every place in gaps of 1 to 3; neos with the obstacle right against the takeoff over a 3-gap, or over a 4-gap at all, never land. These are the least certain jumps in the mod: the model has not been checked against the game.
 

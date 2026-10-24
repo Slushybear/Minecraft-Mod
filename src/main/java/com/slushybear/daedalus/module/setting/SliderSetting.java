@@ -8,12 +8,24 @@ public final class SliderSetting extends Setting<Double> {
     private final double min;
     private final double max;
     private final double step;
+    private String unit = "";
 
     public SliderSetting(String name, double defaultValue, double min, double max, double step) {
         super(name, defaultValue);
         this.min = min;
         this.max = max;
         this.step = step;
+    }
+
+    /** Text shown after the number, like "%" or " blocks". Returns this so it can follow the constructor. */
+    public SliderSetting unit(String text) {
+        unit = text;
+        return this;
+    }
+
+    /** The value with its unit, as the menu shows it. */
+    public String display() {
+        return format() + unit;
     }
 
     /** Snaps to the nearest step and keeps the value inside min and max. */

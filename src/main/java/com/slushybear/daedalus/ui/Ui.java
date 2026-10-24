@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.slushybear.daedalus.module.KeyNames;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.function.IntPredicate;
@@ -13,23 +14,48 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.FormattedText;
+import net.minecraft.network.chat.Style;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
 import org.lwjgl.glfw.GLFW;
 
 /**
- * The menu's widget toolkit: drawing helpers, controls, scrolling, toasts, and the keyboard and mouse state behind them.
+ * The menu's widget toolkit: drawing helpers, controls, scrolling, dropdowns, toasts, and the keyboard and mouse state
+ * behind them. Every colour and size comes from {@link Theme}.
  *
  * How it works: the whole menu is redrawn every frame. While drawing, each clickable control records its rectangle
  * and what a click should do (a {@link Hit}). When the mouse is clicked, the hits from the last frame are checked,
  * topmost first. All coordinates here are menu pixels; DaedalusScreen converts the mouse into them.
  */
 final class Ui {
-    static final int TOGGLE_W = 18;
-    static final int TOGGLE_H = 10;
-    static final int ROW_H = 14;
+    static final int TOGGLE_W = Theme.SWITCH_W;
+    static final int TOGGLE_H = Theme.SWITCH_H;
+    static final int ROW_H = Theme.CONTROL_H;
     private static final int SCROLL_STEP = 18;
     private static final long TOAST_MS = 1800;
+
+    /**
+     * The bundled fonts, one version per menu scale: sans (Inter) for normal text, serif (Gelasio) for titles, and a
+     * smaller serif for the wordmark. They are defined in assets/daedalus/font/. Each version draws its letters at
+     * exactly the number of screen pixels the menu uses at that scale, so every letter pixel lands on one screen pixel
+     * and text stays sharp instead of being stretched or squashed into a blur.
+     */
+    private static final Style[] SANS = fontsFor("sans");
+    private static final Style[] SERIF = fontsFor("serif");
+    private static final Style[] SERIF_SMALL = fontsFor("serif_small");
+
+    private static Style[] fontsFor(String name) {
+        Style[] styles = new Style[5];
+        for (int scale = 1; scale <= 4; scale++) {
+            Identifier id = Identifier.fromNamespaceAndPath("daedalus", name + "_" + scale);
+            styles[scale] = Style.EMPTY.withFont(new FontDescription.Resource(id));
+        }
+        return styles;
+    }
 
     /** What a click does. button is 0 for left, 1 for right. */
     interface Click {
@@ -95,9 +121,12 @@ final class Ui {
     /** A slider being dragged. */
     private record Drag(int x, int w, DoubleConsumer onFraction) {
         void update(double mouseX) {
-            onFraction.accept(Math.max(0, Math.min(1, (mouseX - x - 4) / (w - 8))));
+            onFraction.accept(Math.max(0, Math.min(1, (mouseX - x) / w)));
         }
     }
+
+    /** An open dropdown list, drawn on top of everything by {@link #drawPopup}. */
+    private record Popup(String id, int x, int y, int w, List<String> options, String value, Consumer<String> onPick) {}
 
     static final IntPredicate ANY_TEXT = c -> true;
     static final IntPredicate WHOLE_NUMBER = c -> Character.isDigit(c) || c == '-';
@@ -108,7 +137,7 @@ final class Ui {
     GuiGraphicsExtractor g;
     int mouseX;
     int mouseY;
-    /** Screen pixels per menu pixel. Used to pick text scales that stay sharp. */
+    /** Screen pixels per menu pixel. Used to pick text scales and logo textures that stay sharp. */
     int pixelScale = 2;
 
     private final Minecraft minecraft;
@@ -119,6 +148,7 @@ final class Ui {
     private TextInput focus;
     private Capture capture;
     private Drag drag;
+    private Popup popup;
     private boolean swallowNextChar;
     private String toastText;
     private int toastColor;
@@ -148,8 +178,31 @@ final class Ui {
     // Text and shapes
     // =====================================================================================================
 
+    /** The font for normal text: the smooth sans at this menu scale, or Minecraft's own if Smooth text is off. */
+    Style body() {
+        return Theme.smoothText() ? SANS[fontScale()] : Style.EMPTY;
+    }
+
+    private int fontScale() {
+        return Math.max(1, Math.min(4, pixelScale));
+    }
+
+    private Component styled(String text) {
+        return Component.literal(text).withStyle(body());
+    }
+
+    /** How wide text is in the current font. Always measure with this, not font.width, so layout matches drawing. */
+    int width(String text) {
+        return font.width(styled(text));
+    }
+
+    /** The longest start of text that fits in maxWidth. */
+    private String headByWidth(String text, int maxWidth) {
+        return font.substrByWidth(FormattedText.of(text, body()), maxWidth).getString();
+    }
+
     void text(String text, int x, int y, int color) {
-        g.text(font, text, x, y, color, false);
+        g.text(font, styled(text), x, y, color, false);
     }
 
     void text(FormattedCharSequence text, int x, int y, int color) {
@@ -157,33 +210,85 @@ final class Ui {
     }
 
     void textRight(String text, int right, int y, int color) {
-        text(text, right - font.width(text), y, color);
+        text(text, right - width(text), y, color);
     }
 
     void textCentered(String text, int x, int w, int y, int color) {
-        text(text, x + (w - font.width(text)) / 2, y, color);
+        text(text, x + (w - width(text)) / 2, y, color);
     }
 
     /** Word-wrapped text. Returns the y below the last line. */
     int wrapped(String text, int x, int y, int w, int color) {
-        for (FormattedCharSequence line : font.split(FormattedText.of(text), w)) {
+        for (FormattedCharSequence line : font.split(FormattedText.of(text, body()), w)) {
             text(line, x, y, color);
             y += 10;
         }
         return y;
     }
 
-    /**
-     * Big heading text. It is drawn one screen pixel bigger per font pixel than normal text (for example 3 instead
-     * of 2), which keeps the pixel font sharp; a scale like 1.5 would make some letters lumpy.
-     */
+    /** Small capitals with a pixel of space between letters, for section headings and labels like "PROFILE". */
+    void spaced(String text, int x, int y, int color) {
+        for (int i = 0; i < text.length(); i++) {
+            String c = String.valueOf(text.charAt(i));
+            text(c, x, y, color);
+            x += width(c) + 1;
+        }
+    }
+
+    int spacedWidth(String text) {
+        return width(text) + Math.max(0, text.length() - 1);
+    }
+
+    /** A title in the bundled serif font, like a module name. */
     void heading(String text, int x, int y, int color) {
-        float scale = (pixelScale + 1) / (float) pixelScale;
-        g.pose().pushMatrix();
-        g.pose().translate(x, y);
-        g.pose().scale(scale, scale);
-        g.text(font, text, 0, 0, color, false);
-        g.pose().popMatrix();
+        g.text(font, Component.literal(text).withStyle(SERIF[fontScale()]), x, y, color, false);
+    }
+
+    int headingWidth(String text) {
+        return font.width(Component.literal(text).withStyle(SERIF[fontScale()]));
+    }
+
+    /** The "Daedalus" wordmark in the smaller serif. */
+    void wordmark(String text, int x, int y, int color) {
+        g.text(font, Component.literal(text).withStyle(SERIF_SMALL[fontScale()]), x, y, color, false);
+    }
+
+    /** Cuts a title down to fit, with "...", measured in the serif font. */
+    String truncateHeading(String text, int maxWidth) {
+        if (headingWidth(text) <= maxWidth) {
+            return text;
+        }
+        String cut = text;
+        while (!cut.isEmpty() && headingWidth(cut + "...") > maxWidth) {
+            cut = cut.substring(0, cut.length() - 1);
+        }
+        return cut + "...";
+    }
+
+    /** "Visuals / Block ESP" above a page title. child may be null. */
+    void breadcrumb(String parent, String child, int x, int y) {
+        text(parent, x, y, Theme.muted());
+        if (child != null) {
+            x += width(parent) + 4;
+            text("/", x, y, Theme.pathLine());
+            text(child, x + width("/") + 4, y, Theme.secondary());
+        }
+    }
+
+    /**
+     * A section heading: a small gold diamond, the name in spaced muted capitals, and a hairline running to the right
+     * edge. Returns the y where the section's first row starts.
+     */
+    int section(String name, int x, int y, int w) {
+        y += 9;
+        diamond(x + 2.5f, y + 3.5f, Theme.SECTION_DIAMOND + 1, Theme.accent());
+        String label = name.toUpperCase(Locale.ROOT);
+        spaced(label, x + 9, y, Theme.muted());
+        int lineX = x + 9 + spacedWidth(label) + 6;
+        if (lineX < x + w) {
+            g.fill(lineX, y + 3, x + w, y + 4, Theme.line());
+        }
+        return y + 13;
     }
 
     /** The y to draw text at so it looks centered in a box of height h starting at y. */
@@ -192,10 +297,10 @@ final class Ui {
     }
 
     String truncate(String text, int maxWidth) {
-        if (font.width(text) <= maxWidth) {
+        if (width(text) <= maxWidth) {
             return text;
         }
-        return font.plainSubstrByWidth(text, Math.max(0, maxWidth - font.width("..."))) + "...";
+        return headByWidth(text, Math.max(0, maxWidth - width("..."))) + "...";
     }
 
     void round(int x, int y, int w, int h, int r, int color) {
@@ -212,6 +317,36 @@ final class Ui {
 
     void icon(String[] icon, int x, int y, int color) {
         Icons.draw(g, icon, x, y, color);
+    }
+
+    /**
+     * A diamond: a square turned 45 degrees, centered on cx, cy. size is its width from tip to tip.
+     * Drawn by rotating the drawing position, since Minecraft can only fill straight rectangles.
+     */
+    void diamond(float cx, float cy, float size, int color) {
+        float half = size / 2f / (float) Math.sqrt(2);
+        g.pose().pushMatrix();
+        g.pose().translate(cx, cy);
+        g.pose().rotate((float) (Math.PI / 4));
+        g.pose().scale(half, half);
+        g.fill(-1, -1, 1, 1, color);
+        g.pose().popMatrix();
+    }
+
+    /** A diamond outline: a filled diamond with a smaller one in the background colour on top. */
+    void diamondOutline(float cx, float cy, float size, int color, int inside) {
+        diamond(cx, cy, size, color);
+        diamond(cx, cy, size - 2 * (float) Math.sqrt(2), inside);
+    }
+
+    /**
+     * The Daedalus logo. It comes pre-shrunk in a few sizes (textures/gui/logo_N.png), and the one that matches the
+     * menu scale is used, so every texture pixel lands on exactly one screen pixel and it stays sharp.
+     */
+    void logo(int x, int y, int size) {
+        int texture = Math.max(1, Math.min(4, pixelScale)) * 16;
+        Identifier id = Identifier.fromNamespaceAndPath("daedalus", "textures/gui/logo_" + texture + ".png");
+        g.blit(RenderPipelines.GUI_TEXTURED, id, x, y, 0, 0, size, size, texture, texture, texture, texture);
     }
 
     // =====================================================================================================
@@ -241,13 +376,17 @@ final class Ui {
     }
 
     boolean hover(int x, int y, int w, int h) {
+        if (popup != null) {
+            // While a dropdown is open, only it reacts to the mouse.
+            return false;
+        }
         return mouseX >= Math.max(x, clipX1) && mouseX < Math.min(x + w, clipX2)
                 && mouseY >= Math.max(y, clipY1) && mouseY < Math.min(y + h, clipY2);
     }
 
     /** A 0 to 1 hover value that fades in and out. */
     float hoverFade(String id, int x, int y, int w, int h) {
-        return anim.to("hover:" + id, hover(x, y, w, h) ? 1 : 0);
+        return anim.to("hover:" + id, hover(x, y, w, h) ? 1 : 0, Theme.HOVER_MS);
     }
 
     /**
@@ -277,7 +416,7 @@ final class Ui {
             int content = view + scroll.max;
             int barH = Math.max(12, view * view / content);
             int barY = y1 + (view - barH) * scroll.offset / scroll.max;
-            round(x2 - 3, barY, 2, barH, 1, Theme.mix(Theme.accent(), Theme.line(), 0.35));
+            g.fill(x2 - 3, barY, x2 - 2, barY + barH, Theme.pathLine());
         }
     }
 
@@ -292,28 +431,55 @@ final class Ui {
     // Controls
     // =====================================================================================================
 
+    /**
+     * The flip switch that turns a module on and off: a rounded track with a diamond thumb that slides right when on.
+     * Off is a dark track and a muted thumb; on is a gold border, a warm track and a light gold thumb.
+     */
     void toggle(String id, int x, int y, boolean on, Runnable onClick) {
-        float t = anim.to("toggle:" + id, on ? 1 : 0);
-        round(x, y, TOGGLE_W, TOGGLE_H, TOGGLE_H / 2, Theme.mix(Theme.accent(), Theme.toggleOff(), t));
-        int knobX = x + 2 + Math.round(t * (TOGGLE_W - 10));
-        round(knobX, y + 2, 6, 6, 3, 0xFFFFFFFF);
-        hit(x - 2, y - 2, TOGGLE_W + 4, TOGGLE_H + 4, left(onClick));
+        float t = anim.to("toggle:" + id, on ? 1 : 0, Theme.SWITCH_MS);
+        int w = Theme.SWITCH_W;
+        int h = Theme.SWITCH_H;
+        round(x, y, w, h, h / 2, Theme.mix(Theme.accent(), Theme.pathLine(), t));
+        round(x + 1, y + 1, w - 2, h - 2, h / 2 - 1, Theme.mix(Theme.switchOnTrack(), Theme.toggleOff(), t));
+        float left = x + h / 2f;
+        float right = x + w - h / 2f;
+        diamond(left + (right - left) * t, y + h / 2f, Theme.SWITCH_THUMB + 1,
+                Theme.mix(Theme.accentLight(), Theme.muted(), t));
+        hit(x - 2, y - 2, w + 4, h + 4, left(onClick));
     }
 
-    /** A label on the left with a toggle on the right. Returns the y for the next row. */
+    /** The diamond checkbox: an outline that turns gold, with a filled gold diamond inside, when checked. */
+    void checkbox(String id, int x, int y, boolean on, Runnable onClick) {
+        int size = Theme.CHECK_SIZE;
+        float t = anim.to("check:" + id, on ? 1 : 0, Theme.HOVER_MS);
+        boolean hovered = hover(x - 2, y - 2, size + 4, size + 4);
+        int border = Theme.mix(Theme.accent(), hovered ? Theme.secondary() : Theme.muted(), t);
+        float c = size / 2f;
+        diamondOutline(x + c, y + c, size + 2, border, Theme.bg());
+        if (t > 0) {
+            diamond(x + c, y + c, Theme.CHECK_FILL * t + 1, Theme.accent());
+        }
+        hit(x - 2, y - 2, size + 4, size + 4, left(onClick));
+    }
+
+    /** A label on the left with a checkbox on the right. Returns the y for the next row. */
     int toggleRow(String id, String label, int x, int y, int w, boolean on, Runnable onClick) {
-        text(truncate(label, w - TOGGLE_W - 6), x, y + 2, Theme.text());
-        toggle(id, x + w - TOGGLE_W, y + 1, on, onClick);
+        text(truncate(label, w - Theme.CHECK_SIZE - 8), x, y + 2, Theme.text());
+        checkbox(id, x + w - Theme.CHECK_SIZE - 1, y + 1, on, onClick);
         return y + 17;
     }
 
+    /**
+     * A slider: a thin track, filled in gold up to a light gold diamond. Click or drag anywhere on it.
+     * The value text is drawn by the caller.
+     */
     void slider(int x, int y, int w, double fraction, DoubleConsumer onFraction) {
-        int knobX = x + (int) Math.round(fraction * (w - 8));
-        round(x, y + 2, w, 4, 2, Theme.toggleOff());
-        round(x, y + 2, knobX - x + 4, 4, 2, Theme.accent());
-        round(knobX, y, 8, 8, 4, Theme.accent());
-        round(knobX + 2, y + 2, 4, 4, 2, Theme.text());
-        hit(x, y - 3, w, 14, (button, mx, my) -> {
+        int trackY = y + 3;
+        int fill = (int) Math.round(fraction * w);
+        g.fill(x, trackY, x + w, trackY + 2, Theme.pathLine());
+        g.fill(x, trackY, x + fill, trackY + 2, Theme.accent());
+        diamond(x + fill, trackY + 1, Theme.SLIDER_KNOB + 2, Theme.accentLight());
+        hit(x - 4, y - 3, w + 8, 14, (button, mx, my) -> {
             if (button == 0) {
                 drag = new Drag(x, w, onFraction);
                 drag.update(mx);
@@ -321,32 +487,47 @@ final class Ui {
         });
     }
 
-    /** Label and value on one line, slider below. Returns the y for the next row. */
-    int sliderRow(String label, String value, int x, int y, int w, double fraction, DoubleConsumer onFraction) {
-        text(truncate(label, w - font.width(value) - 6), x, y, Theme.text());
-        textRight(value, x + w, y, Theme.muted());
-        slider(x, y + 12, w, fraction, onFraction);
-        return y + 27;
+    /** A slider with its value to the right, in light gold. Placed by its right edge. */
+    void sliderWithValue(int x, int y, int w, double fraction, String value, DoubleConsumer onFraction) {
+        int valueW = Math.max(26, width(value) + 4);
+        slider(x + 4, y, w - valueW - 8, fraction, onFraction);
+        textRight(value, x + w, y, Theme.accentLight());
     }
 
-    /** A row of buttons where exactly one is picked. */
+    /** Label on the left, slider and value on the right. Returns the y for the next row. */
+    int sliderRow(String label, String value, int x, int y, int w, double fraction, DoubleConsumer onFraction) {
+        int controlW = Math.round(w * 0.55f);
+        text(truncate(label, w - controlW - 6), x, y + 1, Theme.text());
+        sliderWithValue(x + w - controlW, y + 1, controlW, fraction, value, onFraction);
+        return y + 17;
+    }
+
+    /** A row of buttons where exactly one is picked. The picked one is raised, with light gold text. */
     void segmented(int x, int y, int w, int h, List<String> options, String value, Consumer<String> onPick) {
-        box(x, y, w, h, Theme.card(), Theme.line());
-        int inner = w - 4;
+        box(x, y, w, h, Theme.bg(), Theme.line());
+        int inner = w - 2;
         int n = options.size();
         for (int i = 0; i < n; i++) {
             String option = options.get(i);
-            int bx = x + 2 + i * inner / n;
-            int bw = (i + 1) * inner / n - i * inner / n - (i < n - 1 ? 1 : 0);
+            int bx = x + 1 + i * inner / n;
+            int bw = (i + 1) * inner / n - i * inner / n;
             boolean on = option.equals(value);
             if (on) {
-                round(bx, y + 2, bw, h - 4, Math.max(0, Theme.corner(h) - 1), Theme.accent());
+                round(bx, y + 1, bw, h - 2, Math.max(0, Theme.corner(h) - 1), Theme.card());
             }
-            int color = on ? Theme.onAccent() : hover(bx, y + 2, bw, h - 4) ? Theme.text() : Theme.muted();
-            String label = truncate(option, bw - 2);
-            textCentered(label, bx, bw, textY(y, h), color);
-            hit(bx, y + 2, bw, h - 4, left(() -> onPick.accept(option)));
+            int color = on ? Theme.accentLight() : hover(bx, y + 1, bw, h - 2) ? Theme.text() : Theme.muted();
+            textCentered(truncate(option, bw - 4), bx, bw, textY(y, h), color);
+            hit(bx, y + 1, bw, h - 2, left(() -> onPick.accept(option)));
         }
+    }
+
+    /** How wide {@link #segmented} needs to be to fit every option without cutting any off. */
+    int segmentedWidth(List<String> options) {
+        int widest = 0;
+        for (String option : options) {
+            widest = Math.max(widest, width(option));
+        }
+        return options.size() * (widest + 12) + 2;
     }
 
     /**
@@ -370,19 +551,15 @@ final class Ui {
         for (int i = 0; i < labels.size(); i++) {
             String label = labels.get(i);
             String option = values.get(i);
-            int cw = Math.min(w, font.width(label) + 10);
+            int cw = Math.min(w, width(label) + 10);
             if (cx + cw > x + w && cx > x) {
                 cx = x;
                 y += h + gap;
             }
             boolean on = isOn.test(option);
             boolean hovered = hover(cx, y, cw, h);
-            if (on) {
-                round(cx, y, cw, h, Theme.corner(h), Theme.accent());
-            } else {
-                box(cx, y, cw, h, Theme.card(), hovered ? Theme.accent() : Theme.line());
-            }
-            int color = on ? Theme.onAccent() : hovered ? Theme.text() : Theme.muted();
+            box(cx, y, cw, h, on ? Theme.card() : Theme.bg(), on ? Theme.accent() : hovered ? Theme.pathLine() : Theme.line());
+            int color = on ? Theme.accentLight() : hovered ? Theme.text() : Theme.muted();
             textCentered(truncate(label, cw - 4), cx, cw, textY(y, h), color);
             hit(cx, y, cw, h, left(() -> onPick.accept(option)));
             cx += cw + gap;
@@ -391,18 +568,19 @@ final class Ui {
     }
 
     /**
-     * A button showing a key. Click it, then press a key to set it. Esc or Backspace clears it to None.
-     * Right, middle and side mouse buttons can be bound too; a left click cancels, so a stray click never binds it.
-     * Returns the button's width.
+     * A button showing a key, with a small keyboard icon. Click it and it reads "Press a key..." with a gold border;
+     * the next key sets it, and Esc or Backspace clears it to None. Right, middle and side mouse buttons can be bound
+     * too; a left click cancels, so a stray click never binds it. Placed by its right edge. Returns its width.
      */
     int bindButton(String id, int right, int y, String keyName, Consumer<String> onKey) {
         boolean listening = capture != null && capture.id().equals(id);
-        String label = listening ? "Press a key" : KeyNames.display(keyName);
-        int w = Math.max(36, font.width(label) + 12);
+        String label = listening ? "Press a key..." : KeyNames.display(keyName);
+        int w = Math.max(36, width(label) + Icons.SIZE + 14);
         int x = right - w;
         boolean hovered = hover(x, y, w, ROW_H);
-        box(x, y, w, ROW_H, Theme.card(), listening || hovered ? Theme.accent() : Theme.line());
-        textCentered(label, x, w, textY(y, ROW_H), listening ? Theme.accent() : Theme.text());
+        box(x, y, w, ROW_H, hovered ? Theme.hover() : Theme.card(), listening ? Theme.accent() : Theme.line());
+        icon(Icons.KEYBOARD, x + 5, y + (ROW_H - Icons.SIZE) / 2, Theme.muted());
+        text(label, x + 5 + Icons.SIZE + 4, textY(y, ROW_H), listening ? Theme.accentLight() : Theme.text());
         hit(x, y, w, ROW_H, left(() -> capture = new Capture(id, onKey)));
         return w;
     }
@@ -426,20 +604,27 @@ final class Ui {
      */
     void textField(String id, int x, int y, int w, int h, String value, String placeholder, int maxLength,
                    IntPredicate allowed, Consumer<String> onChange, Consumer<String> onCommit, boolean selectAll) {
-        textField(id, x, y, w, h, value, placeholder, maxLength, allowed, onChange, onCommit, selectAll, 0);
+        textField(id, x, y, w, h, value, placeholder, maxLength, allowed, onChange, onCommit, selectAll, 0, false);
     }
 
-    /** The search box in the title bar: a text field with a magnifier icon on the left. */
-    void searchBox(String id, int x, int y, int w, int h, String value, Consumer<String> onChange) {
-        textField(id, x, y, w, h, value, "Search modules", 32, ANY_TEXT, onChange, null, false, Icons.SIZE + 4);
+    /** A text field with a red border, for text that was not accepted. */
+    void textFieldError(String id, int x, int y, int w, int h, String value, int maxLength, Consumer<String> onChange,
+                        boolean error) {
+        textField(id, x, y, w, h, value, "", maxLength, ANY_TEXT, onChange, null, false, 0, error);
+    }
+
+    /** The search box: a text field with a magnifier icon on the left. */
+    void searchBox(String id, int x, int y, int w, int h, String value, String placeholder, Consumer<String> onChange) {
+        textField(id, x, y, w, h, value, placeholder, 32, ANY_TEXT, onChange, null, false, Icons.SIZE + 4, false);
         icon(Icons.SEARCH, x + 5, y + (h - Icons.SIZE) / 2, isFocused(id) ? Theme.accent() : Theme.muted());
     }
 
     private void textField(String id, int x, int y, int w, int h, String value, String placeholder, int maxLength,
                            IntPredicate allowed, Consumer<String> onChange, Consumer<String> onCommit, boolean selectAll,
-                           int padLeft) {
+                           int padLeft, boolean error) {
         boolean focused = isFocused(id);
-        box(x, y, w, h, Theme.card(), focused ? Theme.accent() : Theme.line());
+        int border = error ? Theme.danger() : focused ? Theme.accent() : Theme.line();
+        box(x, y, w, h, Theme.card(), border);
         int textX = x + 5 + padLeft;
         int textW = w - 10 - padLeft;
         if (focused) {
@@ -459,51 +644,63 @@ final class Ui {
     /** Draws the text being edited, scrolled so the cursor is always visible, with a blinking cursor. */
     private void drawEditing(TextInput input, int x, int y, int maxWidth) {
         int start = 0;
-        while (start < input.cursor && font.width(input.text.substring(start, input.cursor)) > maxWidth - 2) {
+        while (start < input.cursor && width(input.text.substring(start, input.cursor)) > maxWidth - 2) {
             start++;
         }
-        String visible = font.plainSubstrByWidth(input.text.substring(start), maxWidth);
+        String visible = headByWidth(input.text.substring(start), maxWidth);
         if (input.allSelected) {
-            g.fill(x - 1, y - 1, x + font.width(visible) + 1, y + 8, Theme.withAlpha(Theme.accent(), 0.45f));
+            g.fill(x - 1, y - 1, x + width(visible) + 1, y + 8, Theme.withAlpha(Theme.accent(), 0.45f));
         }
         text(visible, x, y, Theme.text());
         if ((System.currentTimeMillis() / 500) % 2 == 0) {
-            int cursorX = x + font.width(input.text.substring(start, input.cursor));
-            g.fill(cursorX, y - 1, cursorX + 1, y + 8, Theme.accent());
+            int cursorX = x + width(input.text.substring(start, input.cursor));
+            g.fill(cursorX, y - 1, cursorX + 1, y + 8, Theme.accentLight());
         }
     }
 
     /** A clickable box with a centered label. */
     void chip(int x, int y, int w, int h, String label, Runnable onClick) {
         boolean hovered = hover(x, y, w, h);
-        box(x, y, w, h, Theme.card(), hovered ? Theme.accent() : Theme.line());
-        textCentered(truncate(label, w - 4), x, w, textY(y, h), hovered ? Theme.text() : Theme.muted());
+        box(x, y, w, h, hovered ? Theme.hover() : Theme.card(), Theme.line());
+        textCentered(truncate(label, w - 4), x, w, textY(y, h), Theme.text());
         hit(x, y, w, h, left(onClick));
     }
 
-    /** A chip filled with a solid colour, for the main action (accent) or a dangerous one (red). Returns its width. */
+    /**
+     * The main action of a page (accent) or a dangerous one (red): an outlined button in that colour. Placed by its
+     * right edge. Returns its width.
+     */
     int solidChip(int right, int y, String label, int color, Runnable onClick) {
-        int w = font.width(label) + 14;
+        int w = width(label) + 14;
         int x = right - w;
         boolean hovered = hover(x, y, w, ROW_H);
-        round(x, y, w, ROW_H, Theme.corner(ROW_H), hovered ? Theme.mix(0xFFFFFF, color, 0.15) : color);
-        textCentered(label, x, w, textY(y, ROW_H), Theme.onAccent());
+        box(x, y, w, ROW_H, hovered ? Theme.hover() : Theme.card(), color);
+        textCentered(label, x, w, textY(y, ROW_H), color == Theme.accent() ? Theme.accentLight() : color);
         hit(x, y, w, ROW_H, left(onClick));
         return w;
     }
 
     /** A normal chip placed by its right edge, sized to its label. Returns its width. */
     int chipRight(int right, int y, String label, Runnable onClick) {
-        int w = font.width(label) + 14;
+        int w = width(label) + 14;
         chip(right - w, y, w, ROW_H, label, onClick);
         return w;
     }
 
+    /** A small boxed icon button, for steppers and step lists. */
     void iconButton(int x, int y, int size, String[] icon, Runnable onClick) {
         boolean hovered = hover(x, y, size, size);
-        box(x, y, size, size, Theme.card(), hovered ? Theme.accent() : Theme.line());
+        box(x, y, size, size, hovered ? Theme.hover() : Theme.card(), Theme.line());
         int offset = (size - Icons.SIZE) / 2;
         icon(icon, x + offset, y + offset, hovered ? Theme.text() : Theme.muted());
+        hit(x, y, size, size, left(onClick));
+    }
+
+    /** A bare icon that brightens on hover, like the reset, theme and close buttons. */
+    void plainIcon(int x, int y, int size, String[] icon, Runnable onClick) {
+        float hover = hoverFade("icon:" + x + ":" + y, x, y, size, size);
+        int offset = (size - Icons.SIZE) / 2;
+        icon(icon, x + offset, y + offset, Theme.mix(Theme.text(), Theme.muted(), hover));
         hit(x, y, size, size, left(onClick));
     }
 
@@ -512,9 +709,70 @@ final class Ui {
         int size = ROW_H;
         int x = right - size * 2 - valueWidth - 4;
         iconButton(x, y, size, Icons.MINUS, onMinus);
-        textCentered(value, x + size + 2, valueWidth, textY(y, size), Theme.text());
+        textCentered(value, x + size + 2, valueWidth, textY(y, size), Theme.accentLight());
         iconButton(right - size, y, size, Icons.PLUS, onPlus);
         return right - x;
+    }
+
+    // =====================================================================================================
+    // Dropdowns
+    // =====================================================================================================
+
+    /**
+     * A button showing the current choice and a small arrow. Clicking it opens a list of every option on top of the
+     * menu; picking one closes it. The list itself is drawn by {@link #drawPopup} at the end of the frame.
+     */
+    void dropdown(String id, int x, int y, int w, int h, List<String> options, String value, Consumer<String> onPick) {
+        boolean open = popup != null && popup.id().equals(id);
+        boolean hovered = hover(x, y, w, h);
+        box(x, y, w, h, hovered ? Theme.hover() : Theme.card(), open ? Theme.accent() : Theme.line());
+        text(truncate(value, w - Icons.SIZE - 12), x + 5, textY(y, h), Theme.text());
+        icon(Icons.CHEVRON, x + w - Icons.SIZE - 4, y + (h - Icons.SIZE) / 2 + 1, Theme.muted());
+        hit(x, y, w, h, left(() -> popup = open ? null : new Popup(id, x, y + h + 2, w, options, value, onPick)));
+    }
+
+    /**
+     * Draws the open dropdown list, if any, above everything else. Call last in the frame. The list opens upward when
+     * there is no room below maxY. Clicking anywhere outside it closes it.
+     */
+    void drawPopup(int maxY) {
+        if (popup == null) {
+            return;
+        }
+        Popup p = popup;
+        int itemH = 13;
+        int h = p.options().size() * itemH + 4;
+        int w = p.w();
+        for (String option : p.options()) {
+            w = Math.max(w, width(option) + 14);
+        }
+        int y = p.y() + h <= maxY ? p.y() : p.y() - h - ROW_H - 4;
+        // Swallows clicks outside the list. Added before the items, so the items are on top of it.
+        hits.add(new Hit(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE,
+                (button, mx, my) -> popup = null, null));
+        box(p.x(), y, w, h, Theme.card(), Theme.line());
+        for (int i = 0; i < p.options().size(); i++) {
+            String option = p.options().get(i);
+            int iy = y + 2 + i * itemH;
+            boolean hovered = mouseX >= p.x() && mouseX < p.x() + w && mouseY >= iy && mouseY < iy + itemH;
+            boolean on = option.equals(p.value());
+            if (hovered) {
+                g.fill(p.x() + 1, iy, p.x() + w - 1, iy + itemH, Theme.hover());
+            }
+            text(option, p.x() + 7, textY(iy, itemH), on ? Theme.accentLight() : hovered ? Theme.text() : Theme.secondary());
+            hits.add(new Hit(p.x(), iy, p.x() + w, iy + itemH, left(() -> {
+                popup = null;
+                p.onPick().accept(option);
+            }), null));
+        }
+    }
+
+    boolean popupOpen() {
+        return popup != null;
+    }
+
+    void closePopup() {
+        popup = null;
     }
 
     // =====================================================================================================
@@ -550,14 +808,14 @@ final class Ui {
             return;
         }
         String text = truncate(toastText, maxWidth - 24);
-        int w = font.width(text) + 22;
+        int w = width(text) + 22;
         int h = 17;
         int x = right - w;
         int y = bottom - h + Math.round((1 - alpha) * 4);
         int r = Theme.corner(h);
         round(x, y, w, h, r, Theme.withAlpha(Theme.line(), alpha));
-        round(x + 1, y + 1, w - 2, h - 2, Math.max(0, r - 1), Theme.withAlpha(Theme.cardSelected(), alpha));
-        round(x + 7, y + 6, 5, 5, 2, Theme.withAlpha(toastColor, alpha));
+        round(x + 1, y + 1, w - 2, h - 2, Math.max(0, r - 1), Theme.withAlpha(Theme.card(), alpha));
+        diamond(x + 9.5f, y + 8.5f, 5, Theme.withAlpha(toastColor, alpha));
         text(text, x + 16, y + 5, Theme.withAlpha(Theme.text(), alpha));
     }
 
@@ -629,6 +887,9 @@ final class Ui {
     }
 
     void mouseScrolled(double x, double y, double amount) {
+        if (popup != null) {
+            return;
+        }
         for (int i = scrollAreas.size() - 1; i >= 0; i--) {
             ScrollArea area = scrollAreas.get(i);
             if (x >= area.x1() && x < area.x2() && y >= area.y1() && y < area.y2()) {
@@ -647,6 +908,10 @@ final class Ui {
             swallowNextChar = true;
             boolean clear = event.isEscape() || event.key() == GLFW.GLFW_KEY_BACKSPACE;
             done.onKey().accept(clear ? KeyNames.NONE : InputConstants.getKey(event).getName());
+            return true;
+        }
+        if (popup != null && event.isEscape()) {
+            popup = null;
             return true;
         }
         if (focus == null) {

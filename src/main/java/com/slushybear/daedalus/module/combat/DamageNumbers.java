@@ -30,8 +30,8 @@ public final class DamageNumbers extends Module implements WorldGizmos.Drawer {
     private static final int CRIT_WINDOW_TICKS = 10;
     private static final int CRIT_COLOR = 0xFFFFC94A;
 
-    private final SliderSetting scale = addSetting(new SliderSetting("Scale", 1, 0.5, 2, 0.1));
-    private final BoolSetting critsOnly = addSetting(new BoolSetting("Crits only", false));
+    private final SliderSetting scale = addSetting("Display", "Size of the numbers", new SliderSetting("Scale", 1, 0.5, 2, 0.1).unit("x"));
+    private final BoolSetting critsOnly = addSetting("Display", "Only show critical hits", new BoolSetting("Crits only", false));
 
     private Map<Integer, Float> lastHealth = new HashMap<>();
     private final List<Popup> popups = new ArrayList<>();

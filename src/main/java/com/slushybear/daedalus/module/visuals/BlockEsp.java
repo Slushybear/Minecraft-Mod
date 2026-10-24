@@ -61,14 +61,14 @@ public final class BlockEsp extends Module implements WorldGizmos.Drawer {
             new Preset("Spawners", 0xFFC04BFF, "spawner", "trial_spawner"),
             new Preset("Chests", 0xFFFFA43A, "chest", "trapped_chest", "barrel", "ender_chest"));
 
-    private final MultiChoiceSetting blocks = addSetting(new MultiChoiceSetting("Blocks",
+    private final MultiChoiceSetting blocks = addSetting("Blocks", "Ores and blocks to highlight", new MultiChoiceSetting("Blocks",
             PRESETS.stream().map(Preset::name).toList(), "Diamond", "Ancient debris"));
-    private final TextSetting extra = addSetting(new TextSetting("Extra blocks (ids, comma separated)", ""));
-    private final SliderSetting range = addSetting(new SliderSetting("Range", 48, 8, 128, 8));
-    private final ChoiceSetting mode = addSetting(new ChoiceSetting("Mode", "Outline", "Outline", "Box"));
-    private final ChoiceSetting colours = addSetting(new ChoiceSetting("Colours", "Per block", "Per block", "Accent"));
-    private final BoolSetting tracers = addSetting(new BoolSetting("Tracers", false));
-    private final BoolSetting throughWalls = addSetting(new BoolSetting("Through walls", true));
+    private final TextSetting extra = addSetting("Blocks", "More block ids, comma separated", new TextSetting("Extra blocks", "", BlockEsp::checkIds));
+    private final SliderSetting range = addSetting("Scanning", "How far around you to look", new SliderSetting("Range", 48, 8, 128, 8).unit(" blocks"));
+    private final ChoiceSetting mode = addSetting("Drawing", "Edges only, or shaded faces too", new ChoiceSetting("Mode", "Outline", "Outline", "Box"));
+    private final ChoiceSetting colours = addSetting("Drawing", "Colour by block type, or use the menu accent", new ChoiceSetting("Colours", "Per block", "Per block", "Accent"));
+    private final BoolSetting tracers = addSetting("Drawing", "Lines from the crosshair to the nearest veins", new BoolSetting("Tracers", false));
+    private final BoolSetting throughWalls = addSetting("Drawing", "Show blocks hidden behind others", new BoolSetting("Through walls", true));
 
     private final BlockScanner scanner = new BlockScanner();
     private String scanKey = "";
@@ -109,7 +109,10 @@ public final class BlockEsp extends Module implements WorldGizmos.Drawer {
             scanner.restart(targets());
             shapes = Shapes.EMPTY;
         }
-        if (scanner.tick(client.level, client.player.blockPosition(), (int) Math.round(range.get()))) {
+        boolean changed = scanner.tick(client.level, client.player.blockPosition(), (int) Math.round(range.get()));
+        // Mined or replaced blocks disappear right away, not when the next full scan finishes.
+        changed |= scanner.prune(client.level);
+        if (changed) {
             shapes = build(scanner.results(), client.player.blockPosition());
         }
     }
@@ -131,6 +134,16 @@ public final class BlockEsp extends Module implements WorldGizmos.Drawer {
             }
         }
         return result;
+    }
+
+    /** Check for the Extra blocks field: names the first id that is not a real block, or null when all are fine. */
+    private static String checkIds(String text) {
+        for (String token : text.toLowerCase(Locale.ROOT).split("[,\\s]+")) {
+            if (!token.isEmpty() && block(token).isEmpty()) {
+                return "Unknown block: " + token;
+            }
+        }
+        return null;
     }
 
     private static java.util.Optional<Block> block(String id) {

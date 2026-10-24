@@ -120,7 +120,8 @@ class PathSearchTest {
 
     @Test
     void lowCeilingBlocksTheBody() {
-        FakeWorld world = new FakeWorld().floor(0, 0, 5, 0, 0).set(3, 2, 0, Terrain.SOLID);
+        // Three wide, so a neo cannot go round it through the air beside the corridor.
+        FakeWorld world = new FakeWorld().floor(0, 0, 5, 0, 0).fill(Terrain.SOLID, 3, 3, 2, 2, -1, 1);
 
         assertTrue(search(world, new Cell(0, 1, 0), new Cell(5, 1, 0)).isEmpty());
     }

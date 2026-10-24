@@ -121,7 +121,9 @@ public final class PathTracker {
         if (!supported) {
             return false;
         }
-        return to().type() != MoveType.PARKOUR || StartCell.feetCell(x, y, z).equals(from().cell());
+        MoveType type = to().type();
+        boolean jump = type == MoveType.PARKOUR || type == MoveType.RUN_JUMP || type == MoveType.NEO || type == MoveType.SIDE_JUMP;
+        return !jump || StartCell.feetCell(x, y, z).equals(from().cell());
     }
 
     private boolean arrived(Cell feet, double y, boolean supported) {
@@ -187,13 +189,32 @@ public final class PathTracker {
                     cells.add(new Cell(b.x(), y, b.z()));
                 }
             }
-            case PARKOUR -> {
+            case PARKOUR, RUN_JUMP -> {
                 int dx = Integer.signum(b.x() - a.x());
                 int dz = Integer.signum(b.z() - a.z());
                 int distance = Math.max(Math.abs(b.x() - a.x()), Math.abs(b.z() - a.z()));
                 for (int k = 0; k <= distance; k++) {
                     cells.add(new Cell(a.x() + dx * k, a.y(), a.z() + dz * k));
                     cells.add(new Cell(a.x() + dx * k, a.y() + 1, a.z() + dz * k));
+                }
+                // A jump down comes down through the landing column and the one before it.
+                for (int y = b.y(); y < a.y(); y++) {
+                    cells.add(new Cell(b.x(), y, b.z()));
+                    cells.add(new Cell(b.x() - dx, y, b.z() - dz));
+                }
+            }
+            case NEO, SIDE_JUMP -> {
+                // Everything within a block of the straight line from takeoff to landing, the side lanes included.
+                int minX = Math.min(a.x(), b.x()) - 1;
+                int maxX = Math.max(a.x(), b.x()) + 1;
+                int minZ = Math.min(a.z(), b.z()) - 1;
+                int maxZ = Math.max(a.z(), b.z()) + 1;
+                for (int x = minX; x <= maxX; x++) {
+                    for (int z = minZ; z <= maxZ; z++) {
+                        for (int y = Math.min(a.y(), b.y()); y <= Math.max(a.y(), b.y()) + 1; y++) {
+                            cells.add(new Cell(x, y, z));
+                        }
+                    }
                 }
             }
             case SWIM, LADDER -> {

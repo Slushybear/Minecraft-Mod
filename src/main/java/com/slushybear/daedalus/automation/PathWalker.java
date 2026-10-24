@@ -2,6 +2,7 @@ package com.slushybear.daedalus.automation;
 
 import com.slushybear.daedalus.pathfinding.Cell;
 import com.slushybear.daedalus.pathfinding.JumpPlanner;
+import com.slushybear.daedalus.pathfinding.JumpSim;
 import com.slushybear.daedalus.pathfinding.MoveType;
 import com.slushybear.daedalus.pathfinding.Moves;
 import com.slushybear.daedalus.pathfinding.Path;
@@ -32,6 +33,8 @@ public final class PathWalker {
     private final PathSettings settings;
     private final PathTracker tracker;
     private int verifiedMove = -1;
+    private int plannedJumpMove = -1;
+    private JumpSim.Plan plannedJump;
     private String report = "";
 
     public PathWalker(Path path, PathSettings settings) {
@@ -85,7 +88,10 @@ public final class PathWalker {
             return Status.BLOCKED;
         }
 
-        steer(player, input);
+        if (!steer(level, player, input)) {
+            report = describe(player, "the jump no longer lands");
+            return Status.BLOCKED;
+        }
         return Status.RUNNING;
     }
 
@@ -115,10 +121,14 @@ public final class PathWalker {
         return true;
     }
 
-    private void steer(LocalPlayer player, PathingInput input) {
+    /** Sets the input for the current move. False only if a steered jump can no longer be planned before taking off. */
+    private boolean steer(ClientLevel level, LocalPlayer player, PathingInput input) {
         Cell a = tracker.from().cell();
         Cell b = tracker.to().cell();
         MoveType type = tracker.to().type();
+        if (type == MoveType.NEO || type == MoveType.SIDE_JUMP) {
+            return steerPlannedJump(level, player, input, a, b, type);
+        }
         boolean floating = type == MoveType.SWIM || type == MoveType.LADDER;
 
         double dx = b.x() + 0.5 - player.getX();
@@ -164,25 +174,59 @@ public final class PathWalker {
                 input.jump = dy > 0; // jump climbs; letting go slides down
                 setSprint(player, input, false);
             }
-            case PARKOUR -> steerJump(player, input, a, b);
+            case PARKOUR -> steerJump(player, input, a, b, false);
+            case RUN_JUMP -> steerJump(player, input, a, b, true);
+            case NEO, SIDE_JUMP -> { }
         }
+        return true;
+    }
+
+    /**
+     * A neo or side jump. The plan is worked out once per move from the live world, then each tick the body faces the
+     * next point of it, on the ground and in the air alike, and {@link JumpSim} picks the tick to press jump.
+     */
+    private boolean steerPlannedJump(ClientLevel level, LocalPlayer player, PathingInput input, Cell a, Cell b, MoveType type) {
+        if (plannedJumpMove != tracker.moveIndex()) {
+            plannedJumpMove = tracker.moveIndex();
+            plannedJump = JumpSim.forMove(new WorldView(level), a, b, type);
+        }
+        JumpSim.Plan plan = plannedJump;
+        if (plan == null) {
+            return !player.onGround(); // already in the air: nothing to do but ride it out
+        }
+
+        double[] at = plan.local(player.getX(), player.getZ());
+        double[] facing = plan.facing(at[0], at[1]);
+        player.setYRot((float) Math.toDegrees(Math.atan2(-facing[0], facing[1])));
+        player.setXRot(0);
+        input.forward = true;
+        setSprint(player, input, plan.sprint());
+
+        if (player.onGround() && player.getY() - a.y() < 0.01) {
+            Vec3 velocity = player.getDeltaMovement();
+            double[] v = plan.localVelocity(velocity.x, velocity.z);
+            input.jump = JumpSim.shouldJump(new WorldView(level), plan, new JumpSim.Body(at[0], at[1], v[0], v[1]));
+        }
+        return true;
     }
 
     /**
      * A gap jump. Plain jumps for gaps of 1 and 2 blocks land short enough for a narrow landing, so sprinting is only used
-     * for a 3-block gap and for jumping up. The moment to press jump comes from {@link JumpPlanner}, which simulates the
-     * jump from the real position and speed and jumps at the last moment that still lands.
+     * for gaps of 3 or more and for jumping up. The moment to press jump comes from {@link JumpPlanner}, which simulates
+     * the jump from the real position and speed and jumps at the last moment that still lands. A run jump starts a block
+     * before the takeoff, and the planner simply waits while the body sprints up to it.
      */
-    private void steerJump(LocalPlayer player, PathingInput input, Cell a, Cell b) {
+    private void steerJump(LocalPlayer player, PathingInput input, Cell a, Cell b, boolean runUp) {
         int dirX = Integer.signum(b.x() - a.x());
         int dirZ = Integer.signum(b.z() - a.z());
-        int cells = Math.max(Math.abs(b.x() - a.x()), Math.abs(b.z() - a.z()));
-        int rise = b.y() - a.y();
+        Cell takeoff = runUp ? new Cell(a.x() + dirX, a.y(), a.z() + dirZ) : a;
+        int cells = Math.max(Math.abs(b.x() - takeoff.x()), Math.abs(b.z() - takeoff.z()));
+        int rise = b.y() - takeoff.y();
 
         input.forward = true;
         setSprint(player, input, cells >= 4 || rise > 0);
 
-        double progress = (player.getX() - (a.x() + 0.5)) * dirX + (player.getZ() - (a.z() + 0.5)) * dirZ;
+        double progress = (player.getX() - (takeoff.x() + 0.5)) * dirX + (player.getZ() - (takeoff.z() + 0.5)) * dirZ;
         Vec3 velocity = player.getDeltaMovement();
         double speed = velocity.x * dirX + velocity.z * dirZ;
         boolean overTakeoff = progress - JumpPlanner.HALF_WIDTH < 0.5;

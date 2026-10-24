@@ -67,8 +67,31 @@ class JumpPlannerTest {
     }
 
     @Test
-    void nothingClearsAFourBlockGap() {
+    void aFourBlockGapNeedsARunUp() {
+        // From a standstill on the takeoff block the body is not fast enough by the edge. One block more of sprinting is.
         assertTrue(Double.isNaN(runAndJump(0, true, 5, 0, 3)));
+        assertFalse(Double.isNaN(runAndJump(-1, true, 5, 0, 1)));
+    }
+
+    @Test
+    void nothingClearsAFiveBlockGapOnTheLevel() {
+        assertTrue(Double.isNaN(runAndJump(-5, true, 6, 0, 3)));
+    }
+
+    @Test
+    void plainJumpsDownAcrossOneAndTwoBlockGaps() {
+        for (int rise = -2; rise <= -1; rise++) {
+            assertFalse(Double.isNaN(runAndJump(0, false, 2, rise, 1)), "1-block gap, rise " + rise);
+            assertFalse(Double.isNaN(runAndJump(0, false, 3, rise, 1)), "2-block gap, rise " + rise);
+        }
+    }
+
+    @Test
+    void sprintJumpsDownAcrossThreeAndFourBlockGapsWithoutARunUp() {
+        for (int rise = -2; rise <= -1; rise++) {
+            assertFalse(Double.isNaN(runAndJump(0, true, 4, rise, 1)), "3-block gap, rise " + rise);
+            assertFalse(Double.isNaN(runAndJump(0, true, 5, rise, 1)), "4-block gap, rise " + rise);
+        }
     }
 
     @Test

@@ -23,6 +23,8 @@ public final class Costs {
     public static final double JUMP_UP = fallTicks(1.25) - fallTicks(0.25);
     /** Every jump costs a little extra, so a route without jumps wins when it is about as fast. */
     public static final double JUMP_PENALTY = 2;
+    /** On top of the jump penalty for a level 4-block gap, which lands with little to spare. */
+    public static final double RISKY_JUMP_PENALTY = 10;
     /** Stepping into a cell beside lava or fire. A preference, not a ban: DANGER cells themselves are never entered. */
     public static final double NEAR_DANGER = 10;
     /** Longest run of fully submerged steps, a stand-in for how long the player can hold their breath. */

@@ -61,10 +61,81 @@ class MovementTest {
     }
 
     @Test
-    void rejectsAFourBlockGap() {
+    void runsUpAndJumpsAFourBlockGap() {
         FakeWorld world = new FakeWorld().floor(0, 0, 2, 0, 0).floor(0, 7, 9, 0, 0);
 
-        assertTrue(noPath(world, new Cell(0, 1, 0), at(9, 1, 0)));
+        Path path = path(world, new Cell(0, 1, 0), at(9, 1, 0));
+
+        assertEquals(1, count(path, MoveType.RUN_JUMP));
+        // The move starts a block behind the takeoff, so the run-up is part of it.
+        assertTrue(path.cells().contains(new Cell(1, 1, 0)));
+        assertTrue(path.cells().contains(new Cell(7, 1, 0)));
+        assertTrue(noPath(world, new Cell(0, 1, 0), at(9, 1, 0), PathSettings.defaults().withLongJumps(false)));
+    }
+
+    @Test
+    void wontJumpAFourBlockGapWithNoRoomToRunUp() {
+        FakeWorld world = new FakeWorld().floor(0, 2, 2, 0, 0).floor(0, 7, 9, 0, 0);
+
+        assertTrue(noPath(world, new Cell(2, 1, 0), at(9, 1, 0)));
+    }
+
+    @Test
+    void rejectsAFiveBlockGap() {
+        FakeWorld world = new FakeWorld().floor(0, 0, 2, 0, 0).floor(0, 8, 10, 0, 0);
+
+        assertTrue(noPath(world, new Cell(0, 1, 0), at(10, 1, 0)));
+    }
+
+    @Test
+    void jumpsDownAcrossAGap() {
+        // Landings one and two blocks lower, across gaps of 2 and 4. Neither can be reached any other way.
+        FakeWorld oneDown = new FakeWorld().floor(0, 0, 2, 0, 0).floor(-1, 5, 7, 0, 0);
+        FakeWorld twoDownFar = new FakeWorld().floor(0, 0, 2, 0, 0).floor(-2, 7, 9, 0, 0);
+
+        assertEquals(1, count(path(oneDown, new Cell(0, 1, 0), at(7, 0, 0)), MoveType.PARKOUR));
+        assertEquals(1, count(path(twoDownFar, new Cell(0, 1, 0), at(9, -1, 0)), MoveType.PARKOUR));
+    }
+
+    @Test
+    void neosAroundAFloatingOneByTwoInTheWay() {
+        // A two-block gap with a 1x2 hanging in the jump line at feet and head height. Nothing to walk on beside it.
+        for (int wallX = 3; wallX <= 4; wallX++) {
+            FakeWorld world = new FakeWorld().floor(0, 0, 2, 0, 0).floor(0, 5, 7, 0, 0).fill(Terrain.SOLID, wallX, wallX, 1, 2, 0, 0);
+
+            Path path = path(world, new Cell(0, 1, 0), at(7, 1, 0));
+
+            assertEquals(1, count(path, MoveType.NEO), "wall at x=" + wallX);
+        }
+    }
+
+    @Test
+    void noNeoWhereTheSideIsAlsoBlocked() {
+        // Walls on both sides of the straight line: no way round in the air.
+        FakeWorld world = new FakeWorld().floor(0, 0, 2, 0, 0).floor(0, 5, 7, 0, 0)
+                .fill(Terrain.SOLID, 3, 3, 1, 3, -1, 1);
+
+        assertTrue(noPath(world, new Cell(0, 1, 0), at(7, 1, 0)));
+    }
+
+    @Test
+    void sideJumpsToALandingOffToTheSide() {
+        FakeWorld world = new FakeWorld().floor(0, 0, 2, 0, 0).floor(0, 5, 7, 1, 1);
+
+        Path path = path(world, new Cell(0, 1, 0), at(7, 1, 1));
+
+        assertEquals(1, count(path, MoveType.SIDE_JUMP));
+    }
+
+    @Test
+    void aJumpDownNeedsTheColumnBeforeTheLandingOpen() {
+        // A fence post at y=-1 just before the landing would catch the body on its way down.
+        FakeWorld open = new FakeWorld().floor(0, 0, 2, 0, 0).floor(-2, 7, 9, 0, 0);
+        FakeWorld post = new FakeWorld().floor(0, 0, 2, 0, 0).floor(-2, 7, 9, 0, 0).set(6, -1, 0, Terrain.BLOCKED);
+        Cell landing = new Cell(7, -1, 0);
+
+        assertTrue(Moves.isPossible(open, new Cell(2, 1, 0), landing, PathSettings.defaults()));
+        assertTrue(!Moves.isPossible(post, new Cell(2, 1, 0), landing, PathSettings.defaults()));
     }
 
     @Test
@@ -92,7 +163,8 @@ class MovementTest {
 
     @Test
     void aLowCeilingStopsAJump() {
-        FakeWorld world = new FakeWorld().floor(0, 0, 2, 0, 0).floor(0, 4, 6, 0, 0).set(3, 3, 0, Terrain.SOLID);
+        // Three wide, so there is no going round it either.
+        FakeWorld world = new FakeWorld().floor(0, 0, 2, 0, 0).floor(0, 4, 6, 0, 0).fill(Terrain.SOLID, 3, 3, 3, 3, -1, 1);
 
         assertTrue(noPath(world, new Cell(0, 1, 0), at(6, 1, 0)));
     }

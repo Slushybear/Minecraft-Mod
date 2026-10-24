@@ -7,7 +7,7 @@ Client-side Fabric mod for Minecraft 26.2. Players build their own macros from a
 | Area | Status |
 |---|---|
 | Build against MC 26.2 | Works. `./gradlew build` produces `build/libs/daedalus-client-0.1.0.jar` |
-| Pathfinding unit tests | 99 passing (`PathSearchTest`, `GoalAndCostTest`, `MovementTest`, `PathTrackerTest`, `JumpPlannerTest`, `StartCellAndNavigatorTest`, `GridSnapshotTest`) |
+| Pathfinding unit tests | 112 passing (`PathSearchTest`, `GoalAndCostTest`, `MovementTest`, `PathTrackerTest`, `JumpPlannerTest`, `StartCellAndNavigatorTest`, `GridSnapshotTest`) |
 | Pathfinder, Baritone-style rewrite (2026-10-22) | Search, moves, tracker, jump planner, segments and walker written and unit tested where pure. Walker **not yet run in game** |
 | Damage observer | Written, compiles, **not yet run in game** |
 | Macros, commands, key slots | Written, compiles, **not yet run in game** |
@@ -67,6 +67,23 @@ Rebuilt from scratch following `docs/BARITONE_STUDY.md`. Ideas are Baritone's; t
 | Behavior layer | `DamageObserver` records each health loss. While a controlling macro runs, damage stops it with a message |
 
 Gap jumps follow Baritone: a plain jump for gaps of 1 and 2 blocks, a sprint-jump only for 3 (long jumps) and for landing a block higher. Never offered when the first cell has a floor. The two cells past the landing must be safe to stumble into, not solid.
+
+Beyond Baritone (2026-10-22), all behind long jumps and backed by the `JumpPlanner` model in `JumpPlannerTest`:
+
+| Jump | Rule |
+|---|---|
+| Level 4-block gap (`RUN_JUMP`) | Needs one block of run-up: from a standstill on the takeoff the body is too slow by the edge. The move starts on the run-up block and lands 6 blocks along. Costs an extra 10 ticks so it is only chosen when it saves real time |
+| Jump down 1 or 2 blocks | Across gaps of 1 to 4, no run-up. The column just before the landing must be open down to the landing's height |
+| Jump up 1 block | Still gaps of 1 and 2 only. The model says a 3-block gap up is possible, but that is where it is least trustworthy |
+| Level 5-block gap | Not possible without potions or ice, not offered |
+| Neo (`NEO`) | A level landing across a gap of 1 to 3 with something standing in the straight line: the body curves out and back in. Only where one side of the obstacle is open air over a gap (with a floor beside it, walking round wins), and never around lava or fire. Sprint only. +10 tick penalty |
+| Side jump (`SIDE_JUMP`) | A landing 2 to 4 ahead and one to the side, level, one lower, or one higher for 2 or 3 ahead. Only when none of the three cells next to the takeoff in that direction can be walked to |
+
+Neos and side jumps are planned and steered by `JumpSim`, a 2D simulation of vanilla movement with the body's 0.6 x 1.8 box against the world. It steers the way the walker does (face the next plan point not yet passed) and presses jump at the last tick that lands at 90/100/110% speed. The search runs it from a standstill to decide if a jump is possible; the walker runs it every tick from the real position and speed. The three neo steering lines in `JumpSim.NEO_LINES` came from sweeping the simulation over walls 1 and 2 long at every place in gaps of 1 to 3; neos with the obstacle right against the takeoff over a 3-gap, or over a 4-gap at all, never land. These are the least certain jumps in the mod: the model has not been checked against the game.
+
+Swimming (wade, swim, dive, surface, fall into water, breath limit) and ladders (climb, descend, step onto a ladder top, catch a ladder while falling) were already in the move set from the rewrite, with tests.
+
+2026-10-22 bug: `PathTracker.ahead(0)` returned the current target instead of the one after it, so the walker's look-ahead asked whether a cell could move to itself and rejected every route before its first step. Fixed, with a test.
 
 Removed in the rewrite: path straightening (diagonals make it unnecessary, and it caused the bricking), route repair (replaced by re-sync plus favouring the old route, as Baritone does), `Course`, `FollowPathTask`.
 

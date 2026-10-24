@@ -65,6 +65,23 @@ class PathTrackerTest {
     }
 
     @Test
+    void aRunJumpIsOnlySafeToCancelBeforeTheRunUp() {
+        FakeWorld world = new FakeWorld().floor(0, 0, 2, 0, 0).floor(0, 7, 9, 0, 0);
+        Path path = route(world, new Cell(0, 1, 0), new Cell(9, 1, 0));
+        PathTracker tracker = new PathTracker(path);
+        while (tracker.to().type() != MoveType.RUN_JUMP) {
+            Cell next = tracker.to().cell();
+            standAt(tracker, next.x() + 0.5, next.z() + 0.5);
+        }
+        Cell runUp = tracker.from().cell();
+
+        assertTrue(Moves.isPossible(world, runUp, tracker.to().cell(), PathSettings.defaults()));
+        assertTrue(tracker.safeToCancel(runUp.x() + 0.5, 1, 0.5, true));
+        assertFalse(tracker.safeToCancel(runUp.x() + 1.5, 1, 0.5, true), "on the takeoff block, committed to the jump");
+        assertEquals(PathTracker.Status.ON_TRACK, standAt(tracker, runUp.x() + 3.5, 0.5), "mid-flight over the gap");
+    }
+
+    @Test
     void jumpsBackAfterKnockback() {
         PathTracker tracker = new PathTracker(corridor());
         for (int x = 0; x <= 6; x++) {

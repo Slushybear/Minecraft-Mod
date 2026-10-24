@@ -14,6 +14,18 @@ public enum MoveType {
     SWIM,
     /** Move up or down a ladder or vine. */
     LADDER,
-    /** Jump across a gap of 1 to 3 blocks, landing level or one block higher. */
-    PARKOUR
+    /**
+     * Jump across a gap from where you stand: 1 to 3 blocks landing level, 1 or 2 blocks landing one higher, or 1 to 4
+     * blocks landing one or two lower.
+     */
+    PARKOUR,
+    /**
+     * Sprint across one block of run-up, then jump a 4-block gap to a level landing. The move starts on the run-up
+     * block, since a standing jump from the takeoff block is too slow to make it.
+     */
+    RUN_JUMP,
+    /** Jump to a landing straight ahead, curving out around a wall in the way and back in. Steered by {@link JumpSim}. */
+    NEO,
+    /** Jump to a landing one block off to the side of the jump's main direction. Steered by {@link JumpSim}. */
+    SIDE_JUMP
 }
